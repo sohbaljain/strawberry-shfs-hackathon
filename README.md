@@ -1,36 +1,35 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-## Getting Started
+ AI Usage Disclosure
 
-First, run the development server:
+AI tools were used as assistants during the development of this project.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+### GitHub Copilot and OpenAI Codex
+Used to assist with:
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- writing parts of the code
+- implementing features
+- debugging errors
+- reviewing and improving existing code
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+All generated code was reviewed, tested, and modified by the team before being included in the final project.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### ChatGPT
+Used to assist with:
 
-## Learn More
+- explaining and refining feature ideas in detail
+- planning the product flow
+- improving the problem statement
+- structuring functionality
+- preparing documentation and presentation content
 
-To learn more about Next.js, take a look at the following resources:
+The team made the final decisions regarding the project concept, features, logic, and implementation.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Figma AI
+Used to assist with:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- frontend design
+- interface layout
+- visual styling
+- improving the overall user experience
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The final design direction, screen selection, and product decisions were chosen and reviewed by the team.
