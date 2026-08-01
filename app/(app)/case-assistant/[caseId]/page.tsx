@@ -1,16 +1,16 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { CaseAnalysisFlow } from "../../../components/case-analysis-flow";
 import { Icon, PageContainer } from "../../../components/app-shell";
+import { CaseAssistantWorkspace } from "../../../components/case-assistant";
 import { createServerComponentClient } from "@/lib/supabase/server";
 
-export default async function AnalysisPlaceholderPage({
+export default async function CaseAssistantPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ caseId: string }>;
 }) {
-  const { id } = await params;
-  const caseId = decodeURIComponent(id);
+  const { caseId } = await params;
+  const routeCaseId = decodeURIComponent(caseId);
   const supabase = await createServerComponentClient();
   const { data: claimsData, error: claimsError } = await supabase.auth.getClaims();
 
@@ -21,14 +21,14 @@ export default async function AnalysisPlaceholderPage({
   const { data: caseData, error: caseError } = await supabase
     .schema("public")
     .from("cases")
-    .select("*")
-    .eq("id", caseId)
+    .select("id")
+    .eq("id", routeCaseId)
     .maybeSingle();
 
   if (caseError || !caseData) {
     return (
       <PageContainer
-        eyebrow="Advisory AI analysis"
+        eyebrow="Case assistant"
         title="Case unavailable"
         description="The requested case could not be opened with the current signed-in session."
         actions={
@@ -47,23 +47,5 @@ export default async function AnalysisPlaceholderPage({
     );
   }
 
-  const caseReference =
-    asText(caseData.case_reference ?? caseData.caseReference ?? caseData.reference ?? caseData.fictional_case_number) ||
-    caseId;
-
-  return (
-    <PageContainer
-      eyebrow="Advisory AI analysis"
-      title="Case Intelligence Report"
-      description={`Review structured advisory observations for ${caseReference}. All AI output requires authorised officer verification.`}
-    >
-      <CaseAnalysisFlow caseId={caseId} caseReference={caseReference} />
-    </PageContainer>
-  );
-}
-
-function asText(value: unknown) {
-  if (typeof value === "string") return value.trim();
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return "";
+  return <CaseAssistantWorkspace caseId={routeCaseId} />;
 }

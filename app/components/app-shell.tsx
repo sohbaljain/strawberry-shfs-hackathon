@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
+import { LanguageProvider, languageName, useLanguage } from "./language-provider";
 
 type Theme = "light" | "dark";
 
@@ -30,23 +31,24 @@ type IconName =
   | "user";
 
 const navItems = [
-  { label: "Dashboard", href: "/dashboard", icon: "dashboard", match: "/dashboard" },
-  { label: "My Cases", href: "/cases", icon: "briefcase", match: "/cases" },
-  { label: "Create Case", href: "/cases/new", icon: "plus", match: "/cases/new" },
-  { label: "Analysis", href: "/analysis/CF-2047", icon: "activity", match: "/analysis" },
-  { label: "Oversight", href: "/oversight", icon: "shield", match: "/oversight" },
-  { label: "Settings", href: "/settings", icon: "settings", match: "/settings" },
-] satisfies Array<{ label: string; href: string; icon: IconName; match: string }>;
+  { key: "dashboard", href: "/dashboard", icon: "dashboard", match: "/dashboard" },
+  { key: "myCases", href: "/cases", icon: "briefcase", match: "/cases" },
+  { key: "createCase", href: "/cases/new", icon: "plus", match: "/cases/new" },
+  { key: "analysis", href: "/cases", icon: "activity", match: "/analysis" },
+  { key: "oversight", href: "/oversight", icon: "shield", match: "/oversight" },
+  { key: "settings", href: "/settings", icon: "settings", match: "/settings" },
+] satisfies Array<{ key: "analysis" | "createCase" | "dashboard" | "myCases" | "oversight" | "settings"; href: string; icon: IconName; match: string }>;
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<Theme>("light");
+  return (
+    <LanguageProvider>
+      <AppShellContent>{children}</AppShellContent>
+    </LanguageProvider>
+  );
+}
 
-  useEffect(() => {
-    const stored = window.localStorage.getItem("caseflow-theme") as Theme | null;
-    const nextTheme = stored === "light" || stored === "dark" ? stored : "light";
-    setTheme(nextTheme);
-    document.documentElement.dataset.theme = nextTheme;
-  }, []);
+function AppShellContent({ children }: { children: ReactNode }) {
+  const [theme, setTheme] = useState<Theme>(getInitialTheme);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -68,8 +70,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
+function getInitialTheme(): Theme {
+  if (typeof window === "undefined") return "light";
+
+  const stored = window.localStorage.getItem("caseflow-theme") as Theme | null;
+  return stored === "light" || stored === "dark" ? stored : "light";
+}
+
 export function AppSidebar() {
   const pathname = usePathname();
+  const { t } = useLanguage();
 
   return (
     <aside className="app-sidebar" aria-label="CaseFlow AI workspace navigation">
@@ -95,10 +105,10 @@ export function AppSidebar() {
               aria-current={isActive ? "page" : undefined}
               className={isActive ? "active" : undefined}
               href={item.href}
-              key={item.label}
+              key={item.key}
             >
               <Icon name={item.icon} />
-              <span>{item.label}</span>
+              <span>{t(item.key)}</span>
             </Link>
           );
         })}
@@ -123,16 +133,24 @@ export function AppHeader({
   onToggleTheme: () => void;
 }) {
   const pathname = usePathname();
+  const { language, setLanguage, t } = useLanguage();
+
+  const cycleLanguage = () => {
+    if (language === "en") return setLanguage("hi");
+    if (language === "hi") return setLanguage("pa");
+    return setLanguage("en");
+  };
 
   const title = useMemo(() => {
-    if (pathname.startsWith("/cases/new")) return "Create Case";
-    if (pathname.startsWith("/cases/")) return "Case Detail";
-    if (pathname === "/cases") return "My Cases";
-    if (pathname.startsWith("/analysis")) return "Analysis";
-    if (pathname.startsWith("/oversight")) return "Oversight";
-    if (pathname.startsWith("/settings")) return "Settings";
-    return "Dashboard";
-  }, [pathname]);
+    if (pathname.startsWith("/cases/new")) return t("createCase");
+    if (pathname.startsWith("/cases/")) return t("openCase");
+    if (pathname === "/cases") return t("myCases");
+    if (pathname.startsWith("/case-assistant")) return t("caseAssistant");
+    if (pathname.startsWith("/analysis")) return t("analysis");
+    if (pathname.startsWith("/oversight")) return t("oversight");
+    if (pathname.startsWith("/settings")) return t("settings");
+    return t("dashboard");
+  }, [pathname, t]);
 
   return (
     <header className="app-header">
@@ -142,9 +160,9 @@ export function AppHeader({
       </div>
 
       <div className="app-header-actions">
-        <button className="app-utility-button language-placeholder" type="button" aria-label="Language selector placeholder">
+        <button className="app-utility-button language-placeholder" type="button" aria-label="Language selector" onClick={cycleLanguage}>
           <Icon name="globe" />
-          <span>English</span>
+          <span>{languageName(language)}</span>
           <Icon name="chevron" />
         </button>
         <button className="app-utility-button icon-only" type="button" aria-label="Notifications">
@@ -172,10 +190,12 @@ export function AppHeader({
 }
 
 export function FictionalDataBanner() {
+  const { t } = useLanguage();
+
   return (
     <div className="fictional-data-banner" role="status">
       <Icon name="alert" />
-      <span>Demonstration environment — fictional case data only</span>
+      <span>{t("demoBanner")}</span>
     </div>
   );
 }

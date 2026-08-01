@@ -45,8 +45,11 @@ type MetricCardProps = {
   delay?: number;
 };
 
+export type DashboardMetric = MetricCardProps;
+
 export type PriorityCase = {
   id: string;
+  caseReference: string;
   title: string;
   status: string;
   statusTone: StatusTone;
@@ -63,13 +66,27 @@ export type ActivityItem = {
   tone: ActivityTone;
 };
 
+export type EvidenceProgressItem = {
+  label: string;
+  value: number | null;
+  tone: "purple" | "success" | "warning";
+};
+
+export type ForensicQueueItem = {
+  department: string;
+  caseReference: string;
+  status: string;
+  wait: string;
+  tone: StatusTone;
+};
+
 const periodLabels: Record<Period, string> = {
   week: "Week",
   month: "Month",
   quarter: "Quarter",
 };
 
-export const metricCards: MetricCardProps[] = [
+export const defaultMetricCards: DashboardMetric[] = [
   {
     label: "Assigned Cases",
     value: 18,
@@ -104,7 +121,7 @@ export const metricCards: MetricCardProps[] = [
     label: "Cases Ready for Review",
     value: 9,
     trend: "+3 this week",
-    comparison: "evidence packets complete",
+    comparison: "case packets prepared",
     tone: "success",
     icon: "check",
     sparkline: [4, 5, 6, 6, 7, 8, 9],
@@ -140,13 +157,14 @@ const statusDistribution = [
   { label: "Needs Attention", value: 12, color: "#ef4444" },
   { label: "Awaiting Forensics", value: 16, color: "#f59e0b" },
   { label: "Officer Review", value: 18, color: "#8b5cf6" },
-  { label: "Evidence Ready", value: 20, color: "#14b8a6" },
+  { label: "Ready for Review", value: 20, color: "#14b8a6" },
   { label: "Resolved", value: 12, color: "#22c55e" },
 ];
 
-export const priorityCases: PriorityCase[] = [
+export const defaultPriorityCases: PriorityCase[] = [
   {
     id: "CF-2047",
+    caseReference: "CF-2047",
     title: "Harbor Warehouse Incident",
     status: "Needs Attention",
     statusTone: "attention",
@@ -157,6 +175,7 @@ export const priorityCases: PriorityCase[] = [
   },
   {
     id: "CF-2016",
+    caseReference: "CF-2016",
     title: "Riverside Assault Follow-up",
     status: "Officer Review",
     statusTone: "review",
@@ -167,6 +186,7 @@ export const priorityCases: PriorityCase[] = [
   },
   {
     id: "CF-2039",
+    caseReference: "CF-2039",
     title: "Cedar Avenue Robbery",
     status: "Awaiting Forensics",
     statusTone: "forensics",
@@ -177,16 +197,18 @@ export const priorityCases: PriorityCase[] = [
   },
   {
     id: "CF-2028",
+    caseReference: "CF-2028",
     title: "Metro Station Evidence Review",
-    status: "Evidence Ready",
+    status: "Ready for Review",
     statusTone: "ready",
     priority: "Medium",
     lastActivity: "Digital extract prepared 1h ago",
-    forensicStatus: "Digital extract ready",
+    forensicStatus: "Digital extract prepared",
     readiness: 91,
   },
   {
     id: "CF-2004",
+    caseReference: "CF-2004",
     title: "Market Lane Chain-Snatching",
     status: "Open",
     statusTone: "open",
@@ -197,7 +219,7 @@ export const priorityCases: PriorityCase[] = [
   },
 ];
 
-export const activityItems: ActivityItem[] = [
+export const defaultActivityItems: ActivityItem[] = [
   {
     title: "CF-2047 evidence checklist updated",
     detail: "Exhibit tags and recovery notes moved into officer verification.",
@@ -211,8 +233,8 @@ export const activityItems: ActivityItem[] = [
     tone: "amber",
   },
   {
-    title: "CF-2028 evidence packet ready",
-    detail: "Digital extract, witness notes, and readiness checklist aligned.",
+    title: "CF-2028 packet prepared for review",
+    detail: "Digital extract, witness notes, and preparation checklist aligned.",
     time: "1h ago",
     tone: "green",
   },
@@ -224,42 +246,35 @@ export const activityItems: ActivityItem[] = [
   },
 ];
 
-const evidenceProgress = [
-  { label: "Evidence indexed", value: 82, tone: "purple" },
+const defaultEvidenceProgress: EvidenceProgressItem[] = [
+  { label: "Case information indexed", value: 82, tone: "purple" },
   { label: "Witness statements linked", value: 68, tone: "success" },
   { label: "Forensic request completeness", value: 55, tone: "warning" },
   { label: "Chain-of-custody completeness", value: 74, tone: "success" },
 ];
 
-const forensicQueue = [
+const defaultForensicQueue: ForensicQueueItem[] = [
   {
     department: "Ballistics",
-    caseId: "CF-2047",
+    caseReference: "CF-2047",
     status: "Comparison pending",
     wait: "2d 4h",
-    tone: "attention" as StatusTone,
+    tone: "attention",
   },
   {
     department: "Toxicology",
-    caseId: "CF-2039",
+    caseReference: "CF-2039",
     status: "Lab intake queued",
     wait: "1d 8h",
-    tone: "forensics" as StatusTone,
+    tone: "forensics",
   },
   {
     department: "Digital Forensics",
-    caseId: "CF-2028",
+    caseReference: "CF-2028",
     status: "Device timeline review",
     wait: "18h",
-    tone: "review" as StatusTone,
+    tone: "review",
   },
-];
-
-const quickActions = [
-  { label: "Create Case", href: "/cases/new", icon: "plus" as const },
-  { label: "View Assigned Cases", href: "/cases", icon: "briefcase" as const },
-  { label: "Start Case Analysis", href: "/analysis/CF-2047", icon: "activity" as const },
-  { label: "Review Forensic Requests", href: "/dashboard#forensic-queue", icon: "clipboard" as const },
 ];
 
 function useCountUp(value: number) {
@@ -269,8 +284,8 @@ function useCountUp(value: number) {
     const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     if (prefersReducedMotion) {
-      setDisplay(value);
-      return;
+      const frame = window.requestAnimationFrame(() => setDisplay(value));
+      return () => window.cancelAnimationFrame(frame);
     }
 
     let frame = 0;
@@ -380,7 +395,7 @@ function ChartTooltip({ active, label, payload }: ChartTooltipProps) {
   );
 }
 
-export function CaseProgressChart() {
+export function CaseProgressChart({ illustrativeOnly = true }: { illustrativeOnly?: boolean }) {
   const [period, setPeriod] = useState<Period>("week");
   const data = caseProgressData[period];
 
@@ -390,6 +405,7 @@ export function CaseProgressChart() {
         <div>
           <p>Case progress trend</p>
           <h3>Opened, advanced, and resolved cases</h3>
+          {illustrativeOnly ? <em>Illustrative demonstration trend</em> : null}
         </div>
         <div className="period-toggle" aria-label="Select chart period">
           {(Object.keys(periodLabels) as Period[]).map((item) => (
@@ -465,6 +481,7 @@ export function ResolutionRateCard() {
         <div>
           <p>Case resolution rate</p>
           <h3>Resolved assigned cases</h3>
+          <em>Illustrative demonstration trend</em>
         </div>
       </div>
       <div className="resolution-body">
@@ -486,7 +503,7 @@ export function ResolutionRateCard() {
   );
 }
 
-export function StatusDistributionChart() {
+export function StatusDistributionChart({ illustrativeOnly = true }: { illustrativeOnly?: boolean }) {
   const [activeStatus, setActiveStatus] = useState(statusDistribution[0]);
 
   const handleDonutPointerMove = (event: MouseEvent<SVGSVGElement>) => {
@@ -511,12 +528,13 @@ export function StatusDistributionChart() {
     setActiveStatus(nextStatus);
   };
 
-  let cumulative = 0;
-  const segments = statusDistribution.map((item) => {
-    const segment = { ...item, start: cumulative, end: cumulative + item.value };
-    cumulative += item.value;
-    return segment;
-  });
+  const segments = statusDistribution.reduce<Array<(typeof statusDistribution)[number] & { start: number; end: number }>>(
+    (accumulator, item) => {
+      const start = accumulator.at(-1)?.end ?? 0;
+      return [...accumulator, { ...item, start, end: start + item.value }];
+    },
+    [],
+  );
 
   return (
     <section className="dashboard-card distribution-card dashboard-span-4">
@@ -524,6 +542,7 @@ export function StatusDistributionChart() {
         <div>
           <p>Case status distribution</p>
           <h3>Assigned queue mix</h3>
+          {illustrativeOnly ? <em>Illustrative demonstration trend</em> : null}
         </div>
       </div>
       <div className="distribution-body">
@@ -624,49 +643,53 @@ export function PriorityCaseTable({ cases }: { cases: PriorityCase[] }) {
         </Link>
       </div>
       <div className="priority-table-wrap">
-        <table className="priority-case-table">
-          <caption>Priority case queue with demonstration data only.</caption>
-          <thead>
-            <tr>
-              <th>Case</th>
-              <th>Status</th>
-              <th>Priority</th>
-              <th>Last activity</th>
-              <th>Evidence</th>
-              <th>Forensics</th>
-            </tr>
-          </thead>
-          <tbody>
-            {cases.map((record) => (
-              <tr key={record.id}>
-                <td data-label="Case">
-                  <Link href={`/cases/${record.id}`}>
-                    <span>{record.id}</span>
-                    <strong>{record.title}</strong>
-                  </Link>
-                </td>
-                <td data-label="Status">
-                  <StatusBadge tone={record.statusTone}>{record.status}</StatusBadge>
-                </td>
-                <td data-label="Priority">
-                  <span className={`priority-chip priority-${record.priority.toLowerCase()}`}>
-                    {record.priority}
-                  </span>
-                </td>
-                <td data-label="Last activity">{record.lastActivity}</td>
-                <td data-label="Evidence">
-                  <div className="readiness-cell compact-readiness">
-                    <span>
-                      <i style={{ width: `${record.readiness}%` }} />
-                    </span>
-                    <strong>{record.readiness}%</strong>
-                  </div>
-                </td>
-                <td data-label="Forensics">{record.forensicStatus}</td>
+        {cases.length ? (
+          <table className="priority-case-table">
+            <caption>Priority case queue with demonstration data only.</caption>
+            <thead>
+              <tr>
+                <th>Case</th>
+                <th>Status</th>
+                <th>Priority</th>
+                <th>Last activity</th>
+                <th>Evidence</th>
+                <th>Forensics</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {cases.map((record) => (
+                <tr key={record.id}>
+                  <td data-label="Case">
+                    <Link href={`/cases/${record.id}`}>
+                      <span>{record.caseReference}</span>
+                      <strong>{record.title}</strong>
+                    </Link>
+                  </td>
+                  <td data-label="Status">
+                    <StatusBadge tone={record.statusTone}>{record.status}</StatusBadge>
+                  </td>
+                  <td data-label="Priority">
+                    <span className={`priority-chip priority-${record.priority.toLowerCase()}`}>
+                      {record.priority}
+                    </span>
+                  </td>
+                  <td data-label="Last activity">{record.lastActivity}</td>
+                  <td data-label="Evidence">
+                    <div className="readiness-cell compact-readiness">
+                      <span>
+                        <i style={{ width: `${record.readiness}%` }} />
+                      </span>
+                      <strong>{record.readiness}%</strong>
+                    </div>
+                  </td>
+                  <td data-label="Forensics">{record.forensicStatus}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="case-detail-empty">No priority cases available.</p>
+        )}
       </div>
     </section>
   );
@@ -683,7 +706,7 @@ export function ActivityTimeline({ items }: { items: ActivityItem[] }) {
         <Icon name="activity" />
       </div>
       <ol className="activity-timeline">
-        {items.map((item, index) => (
+        {items.length ? items.map((item, index) => (
           <li
             className={`timeline-${item.tone}`}
             key={item.title}
@@ -696,31 +719,37 @@ export function ActivityTimeline({ items }: { items: ActivityItem[] }) {
             </div>
             <time>{item.time}</time>
           </li>
-        ))}
+        )) : <li className="timeline-purple"><div><strong>No recent activity available.</strong></div></li>}
       </ol>
     </section>
   );
 }
 
 export function EvidenceProgress() {
+  const items = defaultEvidenceProgress;
+
+  return <EvidenceProgressCard items={items} />;
+}
+
+export function EvidenceProgressCard({ items }: { items: EvidenceProgressItem[] }) {
   return (
     <section className="dashboard-card evidence-progress-card dashboard-span-4">
       <div className="dashboard-card-header compact-header">
         <div>
-          <p>Evidence readiness</p>
+          <p>Case Preparation Status</p>
           <h3>Preparation completeness</h3>
         </div>
       </div>
       <div className="evidence-progress-list">
-        {evidenceProgress.map((item, index) => (
+        {items.map((item, index) => (
           <div
             className={`evidence-progress-item progress-${item.tone}`}
             key={item.label}
-            style={{ "--progress": `${item.value}%`, "--app-delay": `${index * 80}ms` } as CSSProperties}
+            style={{ "--progress": `${item.value ?? 0}%`, "--app-delay": `${index * 80}ms` } as CSSProperties}
           >
             <span>
               {item.label}
-              <strong>{item.value}%</strong>
+              <strong>{item.value === null ? "Not recorded" : `${item.value}%`}</strong>
             </span>
             <i>
               <b />
@@ -733,6 +762,16 @@ export function EvidenceProgress() {
 }
 
 export function ForensicQueue() {
+  return <ForensicQueueCard items={defaultForensicQueue} pendingCount={defaultForensicQueue.length} />;
+}
+
+export function ForensicQueueCard({
+  items,
+  pendingCount,
+}: {
+  items: ForensicQueueItem[];
+  pendingCount: number;
+}) {
   return (
     <section className="dashboard-card forensic-queue-card dashboard-span-4" id="forensic-queue">
       <div className="dashboard-card-header compact-header">
@@ -740,23 +779,34 @@ export function ForensicQueue() {
           <p>Forensic queue</p>
           <h3>Pending department responses</h3>
         </div>
-        <StatusBadge tone="forensics">4 pending</StatusBadge>
+        <StatusBadge tone="forensics">{pendingCount} pending</StatusBadge>
       </div>
       <div className="forensic-queue-list">
-        {forensicQueue.map((item) => (
-          <article key={`${item.department}-${item.caseId}`}>
+        {items.length ? items.map((item) => (
+          <article key={`${item.department}-${item.caseReference}`}>
             <span className="queue-dept">{item.department}</span>
-            <strong>{item.caseId}</strong>
+            <strong>{item.caseReference}</strong>
             <StatusBadge tone={item.tone}>{item.status}</StatusBadge>
             <em>{item.wait} waiting</em>
           </article>
-        ))}
+        )) : <article><strong>No pending forensic requests.</strong></article>}
       </div>
     </section>
   );
 }
 
 export function QuickActions() {
+  return <QuickActionsPanel startAnalysisHref="/cases" />;
+}
+
+export function QuickActionsPanel({ startAnalysisHref }: { startAnalysisHref: string }) {
+  const actions = [
+    { label: "Create Case", href: "/cases/new", icon: "plus" as const },
+    { label: "View Assigned Cases", href: "/cases", icon: "briefcase" as const },
+    { label: "Start Case Analysis", href: startAnalysisHref, icon: "activity" as const },
+    { label: "Review Forensic Requests", href: "/dashboard#forensic-queue", icon: "clipboard" as const },
+  ];
+
   return (
     <section className="dashboard-card quick-actions-card dashboard-span-4">
       <div className="dashboard-card-header compact-header">
@@ -766,7 +816,7 @@ export function QuickActions() {
         </div>
       </div>
       <div className="quick-actions-list">
-        {quickActions.map((action, index) => (
+        {actions.map((action, index) => (
           <Link
             href={action.href}
             key={action.label}
@@ -782,4 +832,4 @@ export function QuickActions() {
   );
 }
 
-export const caseRecords = priorityCases;
+export const caseRecords = defaultPriorityCases;

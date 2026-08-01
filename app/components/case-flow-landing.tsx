@@ -126,16 +126,9 @@ const footerLinks = [
 ];
 
 export function CaseFlowLanding() {
-  const [theme, setTheme] = useState<Theme>("light");
+  const [theme, setTheme] = useState<Theme>(getInitialTheme);
 
   useRevealOnScroll();
-
-  useEffect(() => {
-    const stored = window.localStorage.getItem("caseflow-theme") as Theme | null;
-    const nextTheme = stored === "light" || stored === "dark" ? stored : "light";
-    setTheme(nextTheme);
-    document.documentElement.dataset.theme = nextTheme;
-  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -159,6 +152,13 @@ export function CaseFlowLanding() {
       <SiteFooter />
     </div>
   );
+}
+
+function getInitialTheme(): Theme {
+  if (typeof window === "undefined") return "light";
+
+  const stored = window.localStorage.getItem("caseflow-theme") as Theme | null;
+  return stored === "light" || stored === "dark" ? stored : "light";
 }
 
 function SiteHeader({

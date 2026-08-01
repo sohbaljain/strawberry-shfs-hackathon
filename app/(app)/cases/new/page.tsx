@@ -1,16 +1,14 @@
-import { PageContainer, PlaceholderPanel } from "../../../components/app-shell";
+import { CaseCreateForm } from "../../../components/case-create-form";
+import { PageContainer } from "../../../components/app-shell";
 
 export default function NewCasePage() {
   return (
     <PageContainer
-      eyebrow="Phase 1 placeholder"
-      title="Create Case"
-      description="The create-case form is intentionally not built in this phase."
+      eyebrow="Fictional case intake"
+      title="Create Fictional Case"
+      description="Enter an Indian police-record-inspired fictional packet for AI-assisted organisation, gap review, and case preparation analysis. This is not an FIR or official record."
     >
-      <PlaceholderPanel
-        title="No case intake form yet"
-        body="This placeholder confirms the route and shared shell. No uploads, database writes, authentication, or real case handling are active."
-      />
+      <CaseCreateForm />
     </PageContainer>
   );
 }
