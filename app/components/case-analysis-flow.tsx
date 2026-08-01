@@ -5,18 +5,14 @@ import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import {
   ADVISORY_OUTPUT_LABEL,
-  CASE_DRAFT_STORAGE_PREFIX,
-  CASE_REPORT_STORAGE_PREFIX,
   FICTIONAL_DATA_NOTICE,
   REPORT_WARNING,
   buildMockAnalysis,
   caseDisplayName,
-  sampleFictionalCase,
-  validateAnalysisReport,
-  validateCaseInput,
   type AnalyzeCaseResponse,
   type FictionalCaseInput,
 } from "../lib/caseflow-analysis";
+import type { SavedAnalysisVersion } from "../lib/case-analysis-store";
 import {
   buildCaseFlowPdf,
   caseFlowPdfFileName,
@@ -25,7 +21,7 @@ import {
 import { Icon } from "./app-shell";
 import { CaseAssistant } from "./case-assistant";
 
-type FlowStatus = "loading" | "ready" | "error";
+type FlowStatus = "idle" | "loading" | "ready" | "error";
 
 const analysisSteps = [
   "Preparing fictional case packet",
@@ -35,98 +31,113 @@ const analysisSteps = [
 ];
 
 export function CaseAnalysisFlow({
+  analysisVersions,
   caseId,
+  caseInput,
   caseReference,
+  initialResponse,
 }: {
+  analysisVersions: SavedAnalysisVersion[];
   caseId: string;
+  caseInput: FictionalCaseInput;
   caseReference?: string;
+  initialResponse: AnalyzeCaseResponse | null;
 }) {
-  const [status, setStatus] = useState<FlowStatus>("loading");
-  const [response, setResponse] = useState<AnalyzeCaseResponse | null>(null);
-  const [caseInput, setCaseInput] = useState<FictionalCaseInput | null>(null);
+  const [status, setStatus] = useState<FlowStatus>(initialResponse ? "ready" : "idle");
+  const [response, setResponse] = useState<AnalyzeCaseResponse | null>(initialResponse);
   const [message, setMessage] = useState("");
+  const [savedVersions, setSavedVersions] = useState<SavedAnalysisVersion[]>(analysisVersions);
 
-  useEffect(() => {
-    let cancelled = false;
+  const runAnalysis = async () => {
+    window.scrollTo({ top: 0, left: 0 });
+    setStatus("loading");
+    setMessage("");
 
-    const runAnalysis = async () => {
-      window.scrollTo({ top: 0, left: 0 });
-      setStatus("loading");
-      setMessage("");
+    try {
+      const [apiResponse] = await Promise.all([
+        fetch("/api/analyze-case", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...caseInput, caseId }),
+        }),
+        delay(1350),
+      ]);
 
-      const storedReport = readStoredReport(caseId);
-      if (storedReport) {
-        setResponse(storedReport);
-        setCaseInput(readStoredDraft(caseId) || buildSampleInput(caseId, caseReference));
-        setStatus("ready");
-        return;
+      const payload = (await apiResponse.json().catch(() => null)) as
+        | (AnalyzeCaseResponse & {
+            analysisId?: string;
+            verificationStatus?: string;
+            version?: number;
+          })
+        | { error?: string }
+        | null;
+
+      if (!apiResponse.ok || !payload || !("caseId" in payload)) {
+        throw new Error((payload && "error" in payload && payload.error) || "Analysis request failed.");
       }
 
-      const input = readStoredDraft(caseId) || buildSampleInput(caseId, caseReference);
-      setCaseInput(input);
-
-      try {
-        const [apiResponse] = await Promise.all([
-          fetch("/api/analyze-case", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(input),
-          }),
-          delay(1350),
-        ]);
-
-        if (!apiResponse.ok) {
-          throw new Error(`Analysis request failed with status ${apiResponse.status}.`);
-        }
-
-        const data = (await apiResponse.json()) as AnalyzeCaseResponse;
-
-        if (data.caseId !== caseId) {
-          setMessage("This analysis does not belong to the requested case.");
-          setStatus("error");
-          return;
-        }
-
-        if (cancelled) return;
-
-        window.sessionStorage.setItem(
-          `${CASE_REPORT_STORAGE_PREFIX}${caseId}`,
-          JSON.stringify(data),
-        );
-        setResponse(data);
-        setStatus("ready");
-      } catch (error) {
-        if (cancelled) return;
-
-        const fallback: AnalyzeCaseResponse = {
-          caseId,
-          report: buildMockAnalysis(input),
-          source: "mock-fallback",
-          generatedAt: new Date().toISOString(),
-          notice: FICTIONAL_DATA_NOTICE,
-          warning: REPORT_WARNING,
-          advisoryOutputLabel: ADVISORY_OUTPUT_LABEL,
-          message:
-            error instanceof Error
-              ? error.message
-              : "The analysis request could not be completed.",
-        };
-
-        setResponse(fallback);
-        setMessage(fallback.message || "");
-        setStatus("error");
+      if (payload.caseId !== caseId) {
+        throw new Error("This analysis does not belong to the requested case.");
       }
-    };
 
-    runAnalysis();
+      setResponse(payload);
+      setStatus("ready");
 
-    return () => {
-      cancelled = true;
-    };
-  }, [caseId, caseReference]);
+      if (payload.analysisId) {
+        setSavedVersions((current) => {
+          const nextItem: SavedAnalysisVersion = {
+            id: payload.analysisId || `analysis-${payload.generatedAt}`,
+            version: typeof payload.version === "number" ? payload.version : 0,
+            generatedAt: payload.generatedAt,
+            verificationStatus: payload.verificationStatus || "Not reviewed",
+          };
+
+          const merged = [nextItem, ...current.filter((item) => item.id !== nextItem.id)];
+          return merged.sort((a, b) => {
+            if (a.version !== b.version) return b.version - a.version;
+            return Date.parse(b.generatedAt) - Date.parse(a.generatedAt);
+          });
+        });
+      }
+    } catch (error) {
+      const fallback: AnalyzeCaseResponse = {
+        caseId,
+        report: buildMockAnalysis(caseInput),
+        source: "mock-fallback",
+        generatedAt: new Date().toISOString(),
+        notice: FICTIONAL_DATA_NOTICE,
+        warning: REPORT_WARNING,
+        advisoryOutputLabel: ADVISORY_OUTPUT_LABEL,
+        message:
+          error instanceof Error
+            ? error.message
+            : "The analysis request could not be completed.",
+      };
+
+      setResponse(fallback);
+      setMessage(fallback.message || "");
+      setStatus("error");
+    }
+  };
 
   if (status === "loading") {
     return <AnalysisLoadingScreen caseId={caseId} />;
+  }
+
+  if (status === "idle") {
+    return (
+      <section className="dashboard-card analysis-error-card app-page-enter">
+        <Icon name="activity" />
+        <h3>No saved analysis found for {caseReference || caseId}</h3>
+        <p>
+          Generate a new Case Intelligence Report. The result will be stored as a new analysis version for this case.
+        </p>
+        <button className="button button-primary" onClick={() => void runAnalysis()} type="button">
+          <Icon name="activity" />
+          Generate AI analysis
+        </button>
+      </section>
+    );
   }
 
   if (!response) {
@@ -135,6 +146,9 @@ export function CaseAnalysisFlow({
 
   return (
     <CaseIntelligenceReportView
+      analysisVersions={savedVersions}
+      caseReference={caseReference}
+      onRegenerateAnalysis={() => void runAnalysis()}
       caseId={caseId}
       caseInput={caseInput}
       message={message || response.message}
@@ -201,21 +215,26 @@ function AnalysisLoadingScreen({ caseId }: { caseId: string }) {
 }
 
 function CaseIntelligenceReportView({
+  analysisVersions,
   caseId,
   caseInput,
+  caseReference,
   message,
+  onRegenerateAnalysis,
   response,
   showFallbackNotice,
 }: {
+  analysisVersions: SavedAnalysisVersion[];
   caseId: string;
-  caseInput: FictionalCaseInput | null;
+  caseInput: FictionalCaseInput;
+  caseReference?: string;
   message?: string;
+  onRegenerateAnalysis: () => void;
   response: AnalyzeCaseResponse;
   showFallbackNotice: boolean;
 }) {
   const { report } = response;
-  const assistantCaseInput = caseInput || buildSampleInput(caseId);
-  const displayName = caseDisplayName(assistantCaseInput) || caseId;
+  const displayName = caseDisplayName(caseInput) || caseReference || caseId;
 
   const handleDownload = (mode: AdvisoryPdfMode) => {
     const pdfBytes = buildCaseFlowPdf(response, mode, caseInput);
@@ -242,6 +261,10 @@ function CaseIntelligenceReportView({
           <h3>Case Intelligence Report</h3>
           <p>
             Advisory observations for {displayName}. These summaries are designed to help an authorised officer review gaps, differences, and preparation issues.
+          </p>
+          <p>
+            Generated at {new Date(response.generatedAt).toLocaleString("en-IN")}.
+            {analysisVersions.length ? ` Saved versions: ${analysisVersions.length}.` : ""}
           </p>
         </div>
         <div className="report-status-panel">
@@ -372,6 +395,15 @@ function CaseIntelligenceReportView({
 
       <div className="report-actions">
         <button
+          className="button button-primary"
+          data-testid="regenerate-analysis"
+          onClick={onRegenerateAnalysis}
+          type="button"
+        >
+          <Icon name="activity" />
+          Generate new analysis version
+        </button>
+        <button
           className="button button-secondary"
           data-testid="download-advisory-report"
           onClick={() => handleDownload("advisory")}
@@ -402,7 +434,7 @@ function CaseIntelligenceReportView({
       <CaseAssistant
         analysisReport={report}
         caseId={caseId}
-        caseInput={assistantCaseInput}
+        caseInput={caseInput}
         caseReference={displayName}
         key={caseId}
       />
@@ -459,55 +491,6 @@ function AnalysisError({ caseId, message }: { caseId: string; message: string })
       </Link>
     </section>
   );
-}
-
-function readStoredDraft(caseId: string): FictionalCaseInput | null {
-  try {
-    const raw = window.sessionStorage.getItem(`${CASE_DRAFT_STORAGE_PREFIX}${caseId}`);
-    return raw ? validateCaseInput(JSON.parse(raw)) : null;
-  } catch {
-    return null;
-  }
-}
-
-function readStoredReport(caseId: string): AnalyzeCaseResponse | null {
-  try {
-    const raw = window.sessionStorage.getItem(`${CASE_REPORT_STORAGE_PREFIX}${caseId}`);
-    if (!raw) return null;
-
-    const parsed = JSON.parse(raw) as Partial<AnalyzeCaseResponse>;
-    const report = validateAnalysisReport(parsed.report);
-
-    if (!report || parsed.caseId !== caseId) return null;
-
-    return {
-      caseId,
-      report,
-      source: parsed.source === "gemini" ? "gemini" : "mock-fallback",
-      generatedAt: typeof parsed.generatedAt === "string" ? parsed.generatedAt : new Date().toISOString(),
-      notice: typeof parsed.notice === "string" ? parsed.notice : FICTIONAL_DATA_NOTICE,
-      warning: typeof parsed.warning === "string" ? parsed.warning : REPORT_WARNING,
-      advisoryOutputLabel:
-        typeof parsed.advisoryOutputLabel === "string"
-          ? parsed.advisoryOutputLabel
-          : ADVISORY_OUTPUT_LABEL,
-      message: typeof parsed.message === "string" ? parsed.message : undefined,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function buildSampleInput(caseId: string, caseReference?: string): FictionalCaseInput {
-  return {
-    ...sampleFictionalCase,
-    caseId,
-    caseIdentification: {
-      ...sampleFictionalCase.caseIdentification,
-      fictionalCaseNumber: caseReference || caseId,
-    },
-    createdAt: new Date().toISOString(),
-  };
 }
 
 function delay(ms: number) {

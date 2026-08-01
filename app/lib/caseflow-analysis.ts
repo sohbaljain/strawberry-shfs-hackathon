@@ -143,7 +143,10 @@ export type CaseIntelligenceReport = {
 };
 
 export type AnalyzeCaseResponse = {
+  analysisId?: string;
   caseId: string;
+  verificationStatus?: string;
+  version?: number;
   report: CaseIntelligenceReport;
   source: "gemini" | "mock-fallback";
   generatedAt: string;
@@ -168,7 +171,30 @@ export type CaseAssistantRequest = {
   question: string;
   caseInput: FictionalCaseInput;
   analysisReport: CaseIntelligenceReport;
-  uiLanguage?: "en" | "hi" | "pa";
+  uiLanguage?:
+    | "en"
+    | "as"
+    | "bn"
+    | "brx"
+    | "doi"
+    | "gu"
+    | "hi"
+    | "kn"
+    | "ks"
+    | "kok"
+    | "mai"
+    | "ml"
+    | "mni"
+    | "mr"
+    | "ne"
+    | "or"
+    | "pa"
+    | "sa"
+    | "sat"
+    | "sd"
+    | "ta"
+    | "te"
+    | "ur";
   history: Array<{
     role: "user" | "assistant";
     content: string;

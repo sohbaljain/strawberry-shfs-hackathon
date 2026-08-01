@@ -3,18 +3,10 @@
 import Link from "next/link";
 import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
-  CASE_DRAFT_STORAGE_PREFIX,
   CASE_ASSISTANT_UNAVAILABLE_MESSAGE,
-  CASE_REPORT_STORAGE_PREFIX,
   FICTIONAL_DATA_NOTICE,
   REPORT_WARNING,
-  buildMockAnalysis,
-  caseDisplayName,
   createClientId,
-  sampleFictionalCase,
-  validateAnalysisReport,
-  validateCaseInput,
-  type AnalyzeCaseResponse,
   type CaseAssistantResponse,
   type CaseChatMessage,
   type CaseIntelligenceReport,
@@ -77,9 +69,20 @@ export function CaseAssistant({
   );
 }
 
-export function CaseAssistantWorkspace({ caseId }: { caseId: string }) {
+export function CaseAssistantWorkspace({
+  analysisReport,
+  analysisSource,
+  caseInput,
+  caseDisplayName,
+  caseId,
+}: {
+  analysisReport: CaseIntelligenceReport;
+  analysisSource: "gemini" | "mock-fallback";
+  caseInput: FictionalCaseInput;
+  caseDisplayName?: string;
+  caseId: string;
+}) {
   const { language, t } = useLanguage();
-  const [packet, setPacket] = useState(() => buildAssistantFallbackPacket(caseId));
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
   const [isHydrated, setIsHydrated] = useState(false);
@@ -102,14 +105,6 @@ export function CaseAssistantWorkspace({ caseId }: { caseId: string }) {
   const messages = activeSession?.messages ?? [];
   const isSendingActiveSession =
     sendState === "sending" && Boolean(activeSession?.id) && sendingSessionId === activeSession.id;
-
-  useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      setPacket(buildAssistantPacket(caseId));
-    }, 0);
-
-    return () => window.clearTimeout(timeout);
-  }, [caseId]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -185,6 +180,12 @@ export function CaseAssistantWorkspace({ caseId }: { caseId: string }) {
   };
 
   const deleteSession = (sessionId: string) => {
+    const session = sessions.find((item) => item.id === sessionId);
+    const approved = window.confirm(
+      session ? `Delete chat \"${session.title}\" from this device?` : "Delete this chat from this device?",
+    );
+    if (!approved) return;
+
     setSessions((current) => {
       const remaining = current.filter((session) => session.id !== sessionId);
       const nextSessions = remaining.length ? remaining : [createSession(caseId)];
@@ -242,8 +243,8 @@ export function CaseAssistantWorkspace({ caseId }: { caseId: string }) {
         body: JSON.stringify({
           caseId,
           question,
-          caseInput: packet.caseInput,
-          analysisReport: packet.report,
+          caseInput,
+          analysisReport,
           uiLanguage: language,
           history: nextMessages
             .slice(-historyMessagesForRequest)
@@ -308,13 +309,13 @@ export function CaseAssistantWorkspace({ caseId }: { caseId: string }) {
         <header className="case-assistant-conversation-header">
           <div className="case-assistant-heading">
             <span className="report-source-pill">
-              <Icon name={packet.source === "gemini" ? "activity" : "alert"} />
-              {packet.source === "gemini"
+              <Icon name={analysisSource === "gemini" ? "activity" : "alert"} />
+              {analysisSource === "gemini"
                 ? t("assistant.validatedGeminiReport")
                 : t("assistant.mockFallbackContext")}
             </span>
             <h2 id="case-assistant-title">{t("caseAssistant")}</h2>
-            <p>{packet.displayName}</p>
+            <p>{caseDisplayName || caseId}</p>
           </div>
 
           <div className="case-assistant-header-actions">
@@ -668,82 +669,6 @@ function isAssistantResponse(value: unknown): value is CaseAssistantResponse {
     Array.isArray(value.limitations) &&
     value.requiresHumanVerification === true
   );
-}
-
-function buildAssistantPacket(caseId: string) {
-  const caseInput = readStoredDraft(caseId) || buildSampleInput(caseId);
-  const storedReport = readStoredReport(caseId);
-  const report = storedReport?.report || buildMockAnalysis(caseInput);
-
-  return {
-    caseInput,
-    report,
-    displayName: caseDisplayName(caseInput) || caseId,
-    source: storedReport?.source || "mock-fallback",
-  };
-}
-
-function buildAssistantFallbackPacket(caseId: string) {
-  const caseInput = buildSampleInput(caseId);
-
-  return {
-    caseInput,
-    report: buildMockAnalysis(caseInput),
-    displayName: caseDisplayName(caseInput) || caseId,
-    source: "mock-fallback",
-  };
-}
-
-function readStoredDraft(caseId: string): FictionalCaseInput | null {
-  if (typeof window === "undefined") return null;
-
-  try {
-    const raw = window.sessionStorage.getItem(`${CASE_DRAFT_STORAGE_PREFIX}${caseId}`);
-    return raw ? validateCaseInput(JSON.parse(raw)) : null;
-  } catch {
-    return null;
-  }
-}
-
-function readStoredReport(caseId: string): AnalyzeCaseResponse | null {
-  if (typeof window === "undefined") return null;
-
-  try {
-    const raw = window.sessionStorage.getItem(`${CASE_REPORT_STORAGE_PREFIX}${caseId}`);
-    if (!raw) return null;
-
-    const parsed = JSON.parse(raw) as Partial<AnalyzeCaseResponse>;
-    const report = validateAnalysisReport(parsed.report);
-
-    if (!report || parsed.caseId !== caseId) return null;
-
-    return {
-      caseId,
-      report,
-      source: parsed.source === "gemini" ? "gemini" : "mock-fallback",
-      generatedAt: typeof parsed.generatedAt === "string" ? parsed.generatedAt : new Date().toISOString(),
-      notice: typeof parsed.notice === "string" ? parsed.notice : "",
-      warning: typeof parsed.warning === "string" ? parsed.warning : "",
-      advisoryOutputLabel:
-        typeof parsed.advisoryOutputLabel === "string" ? parsed.advisoryOutputLabel : "",
-      model: typeof parsed.model === "string" ? parsed.model : undefined,
-      message: typeof parsed.message === "string" ? parsed.message : undefined,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function buildSampleInput(caseId: string): FictionalCaseInput {
-  return {
-    ...sampleFictionalCase,
-    caseId,
-    caseIdentification: {
-      ...sampleFictionalCase.caseIdentification,
-      fictionalCaseNumber: caseId,
-    },
-    createdAt: new Date().toISOString(),
-  };
 }
 
 function asText(value: unknown) {

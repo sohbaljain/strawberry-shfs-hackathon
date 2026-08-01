@@ -18,7 +18,6 @@ import { Icon } from "./app-shell";
 type StatusTone = "attention" | "forensics" | "ready" | "review" | "open" | "resolved" | "calm";
 type MetricTone = "purple" | "danger" | "warning" | "success";
 type ActivityTone = "green" | "purple" | "amber" | "red";
-type Period = "week" | "month" | "quarter";
 
 type TooltipPayload = {
   color?: string;
@@ -80,10 +79,19 @@ export type ForensicQueueItem = {
   tone: StatusTone;
 };
 
-const periodLabels: Record<Period, string> = {
-  week: "Week",
-  month: "Month",
-  quarter: "Quarter",
+export type CaseProgressPoint = {
+  label: string;
+  opened: number;
+  moved: number;
+  resolved: number;
+};
+
+export type StatusDistributionItem = {
+  label: string;
+  value: number;
+  color: string;
+  count?: number;
+  total?: number;
 };
 
 export const defaultMetricCards: DashboardMetric[] = [
@@ -127,38 +135,6 @@ export const defaultMetricCards: DashboardMetric[] = [
     sparkline: [4, 5, 6, 6, 7, 8, 9],
     direction: "up",
   },
-];
-
-const caseProgressData: Record<Period, Array<{ label: string; opened: number; moved: number; resolved: number }>> = {
-  week: [
-    { label: "Mon", opened: 8, moved: 5, resolved: 2 },
-    { label: "Tue", opened: 10, moved: 7, resolved: 4 },
-    { label: "Wed", opened: 9, moved: 8, resolved: 5 },
-    { label: "Thu", opened: 13, moved: 10, resolved: 7 },
-    { label: "Fri", opened: 12, moved: 11, resolved: 8 },
-    { label: "Sat", opened: 15, moved: 12, resolved: 9 },
-    { label: "Sun", opened: 18, moved: 14, resolved: 12 },
-  ],
-  month: [
-    { label: "W1", opened: 42, moved: 30, resolved: 18 },
-    { label: "W2", opened: 51, moved: 37, resolved: 25 },
-    { label: "W3", opened: 47, moved: 42, resolved: 31 },
-    { label: "W4", opened: 59, moved: 49, resolved: 38 },
-  ],
-  quarter: [
-    { label: "May", opened: 118, moved: 91, resolved: 58 },
-    { label: "Jun", opened: 132, moved: 106, resolved: 76 },
-    { label: "Jul", opened: 146, moved: 121, resolved: 93 },
-  ],
-};
-
-const statusDistribution = [
-  { label: "Open", value: 22, color: "#5b55f6" },
-  { label: "Needs Attention", value: 12, color: "#ef4444" },
-  { label: "Awaiting Forensics", value: 16, color: "#f59e0b" },
-  { label: "Officer Review", value: 18, color: "#8b5cf6" },
-  { label: "Ready for Review", value: 20, color: "#14b8a6" },
-  { label: "Resolved", value: 12, color: "#22c55e" },
 ];
 
 export const defaultPriorityCases: PriorityCase[] = [
@@ -395,9 +371,20 @@ function ChartTooltip({ active, label, payload }: ChartTooltipProps) {
   );
 }
 
-export function CaseProgressChart({ illustrativeOnly = true }: { illustrativeOnly?: boolean }) {
-  const [period, setPeriod] = useState<Period>("week");
-  const data = caseProgressData[period];
+export function CaseProgressChart({ data }: { data: CaseProgressPoint[] }) {
+  if (!data.length) {
+    return (
+      <section className="dashboard-card progress-chart-card dashboard-span-8">
+        <div className="dashboard-card-header chart-card-header">
+          <div>
+            <p>Case progress trend</p>
+            <h3>Opened, advanced, and resolved cases</h3>
+          </div>
+        </div>
+        <p className="case-detail-empty">No recent activity history is available for trend rendering.</p>
+      </section>
+    );
+  }
 
   return (
     <section className="dashboard-card progress-chart-card dashboard-span-8">
@@ -405,24 +392,11 @@ export function CaseProgressChart({ illustrativeOnly = true }: { illustrativeOnl
         <div>
           <p>Case progress trend</p>
           <h3>Opened, advanced, and resolved cases</h3>
-          {illustrativeOnly ? <em>Illustrative demonstration trend</em> : null}
-        </div>
-        <div className="period-toggle" aria-label="Select chart period">
-          {(Object.keys(periodLabels) as Period[]).map((item) => (
-            <button
-              className={period === item ? "active" : undefined}
-              key={item}
-              onClick={() => setPeriod(item)}
-              type="button"
-            >
-              {periodLabels[item]}
-            </button>
-          ))}
         </div>
       </div>
       <div className="case-chart-shell">
         <ResponsiveContainer width="100%" height={292}>
-          <AreaChart data={data} key={period} margin={{ top: 12, right: 8, left: -18, bottom: 2 }}>
+          <AreaChart data={data} margin={{ top: 12, right: 8, left: -18, bottom: 2 }}>
             <defs>
               <linearGradient id="openedGradient" x1="0" x2="0" y1="0" y2="1">
                 <stop offset="0%" stopColor="#5b55f6" stopOpacity={0.24} />
@@ -472,8 +446,28 @@ export function CaseProgressChart({ illustrativeOnly = true }: { illustrativeOnl
   );
 }
 
-export function ResolutionRateCard() {
-  const rate = 64;
+export function ResolutionRateCard({
+  resolvedCount,
+  totalCount,
+}: {
+  resolvedCount: number;
+  totalCount: number;
+}) {
+  if (!totalCount) {
+    return (
+      <section className="dashboard-card resolution-card dashboard-span-4">
+        <div className="dashboard-card-header compact-header">
+          <div>
+            <p>Case resolution rate</p>
+            <h3>Resolved assigned cases</h3>
+          </div>
+        </div>
+        <p className="case-detail-empty">Resolution rate appears after assigned cases are available.</p>
+      </section>
+    );
+  }
+
+  const rate = Math.round((resolvedCount / totalCount) * 100);
 
   return (
     <section className="dashboard-card resolution-card dashboard-span-4">
@@ -481,7 +475,6 @@ export function ResolutionRateCard() {
         <div>
           <p>Case resolution rate</p>
           <h3>Resolved assigned cases</h3>
-          <em>Illustrative demonstration trend</em>
         </div>
       </div>
       <div className="resolution-body">
@@ -495,16 +488,31 @@ export function ResolutionRateCard() {
           </strong>
         </div>
         <div>
-          <p>12 of 18 assigned cases resolved</p>
-          <span className="positive-change">↗ +8% compared with last period</span>
+          <p>{`${resolvedCount} of ${totalCount} assigned cases resolved`}</p>
+          <span className="positive-change">Current authorized case resolution status</span>
         </div>
       </div>
     </section>
   );
 }
 
-export function StatusDistributionChart({ illustrativeOnly = true }: { illustrativeOnly?: boolean }) {
-  const [activeStatus, setActiveStatus] = useState(statusDistribution[0]);
+export function StatusDistributionChart({ items }: { items: StatusDistributionItem[] }) {
+  const [hoveredLabel, setHoveredLabel] = useState<string | null>(null);
+  const activeStatus = items.find((item) => item.label === hoveredLabel) ?? items[0] ?? null;
+
+  if (!items.length || !activeStatus) {
+    return (
+      <section className="dashboard-card distribution-card dashboard-span-4">
+        <div className="dashboard-card-header compact-header">
+          <div>
+            <p>Case status distribution</p>
+            <h3>Assigned queue mix</h3>
+          </div>
+        </div>
+        <p className="case-detail-empty">Status distribution appears when assigned-case statuses are available.</p>
+      </section>
+    );
+  }
 
   const handleDonutPointerMove = (event: MouseEvent<SVGSVGElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -520,15 +528,15 @@ export function StatusDistributionChart({ illustrativeOnly = true }: { illustrat
     const percent = ((angle + 90 + 360) % 360) / 3.6;
     let running = 0;
     const nextStatus =
-      statusDistribution.find((item) => {
+      items.find((item) => {
         running += item.value;
         return percent <= running;
-      }) ?? statusDistribution[0];
+      }) ?? items[0];
 
-    setActiveStatus(nextStatus);
+    setHoveredLabel(nextStatus.label);
   };
 
-  const segments = statusDistribution.reduce<Array<(typeof statusDistribution)[number] & { start: number; end: number }>>(
+  const segments = items.reduce<Array<StatusDistributionItem & { start: number; end: number }>>(
     (accumulator, item) => {
       const start = accumulator.at(-1)?.end ?? 0;
       return [...accumulator, { ...item, start, end: start + item.value }];
@@ -542,14 +550,13 @@ export function StatusDistributionChart({ illustrativeOnly = true }: { illustrat
         <div>
           <p>Case status distribution</p>
           <h3>Assigned queue mix</h3>
-          {illustrativeOnly ? <em>Illustrative demonstration trend</em> : null}
         </div>
       </div>
       <div className="distribution-body">
         <div className="distribution-chart">
           <svg
             className="distribution-donut"
-            onMouseLeave={() => setActiveStatus(statusDistribution[0])}
+            onMouseLeave={() => setHoveredLabel(null)}
             onMouseMove={handleDonutPointerMove}
             viewBox="0 0 120 120"
             role="img"
@@ -563,9 +570,9 @@ export function StatusDistributionChart({ illustrativeOnly = true }: { illustrat
                 d={donutSegmentPath(entry.start, entry.end)}
                 fill={entry.color}
                 key={entry.label}
-                onBlur={() => setActiveStatus(statusDistribution[0])}
-                onFocus={() => setActiveStatus(entry)}
-                onMouseEnter={() => setActiveStatus(entry)}
+                onBlur={() => setHoveredLabel(null)}
+                onFocus={() => setHoveredLabel(entry.label)}
+                onMouseEnter={() => setHoveredLabel(entry.label)}
                 role="button"
                 style={{ "--app-delay": `${index * 80}ms` } as CSSProperties}
                 tabIndex={0}
@@ -573,7 +580,9 @@ export function StatusDistributionChart({ illustrativeOnly = true }: { illustrat
             ))}
             <circle className="distribution-hole" cx="60" cy="60" r="30" />
             <text className="distribution-center-value" x="60" y="56">
-              {activeStatus.value}%
+              {typeof activeStatus.count === "number" && typeof activeStatus.total === "number"
+                ? `${activeStatus.count}/${activeStatus.total}`
+                : `${Math.round(activeStatus.value)}%`}
             </text>
             <text className="distribution-center-label" x="60" y="70">
               {activeStatus.label}
@@ -581,16 +590,20 @@ export function StatusDistributionChart({ illustrativeOnly = true }: { illustrat
           </svg>
         </div>
         <ul className="distribution-list">
-          {statusDistribution.map((item) => (
+          {items.map((item) => (
             <li
               className={activeStatus.label === item.label ? "is-active" : undefined}
               key={item.label}
-              onMouseEnter={() => setActiveStatus(item)}
-              onMouseLeave={() => setActiveStatus(statusDistribution[0])}
+              onMouseEnter={() => setHoveredLabel(item.label)}
+              onMouseLeave={() => setHoveredLabel(null)}
             >
               <span style={{ "--dot-color": item.color } as CSSProperties} />
               {item.label}
-              <strong>{item.value}%</strong>
+              <strong>
+                {typeof item.count === "number" && typeof item.total === "number"
+                  ? item.count
+                  : `${Math.round(item.value)}%`}
+              </strong>
             </li>
           ))}
         </ul>
@@ -645,7 +658,7 @@ export function PriorityCaseTable({ cases }: { cases: PriorityCase[] }) {
       <div className="priority-table-wrap">
         {cases.length ? (
           <table className="priority-case-table">
-            <caption>Priority case queue with demonstration data only.</caption>
+            <caption>Priority case queue from authorized records.</caption>
             <thead>
               <tr>
                 <th>Case</th>
@@ -749,7 +762,7 @@ export function EvidenceProgressCard({ items }: { items: EvidenceProgressItem[] 
           >
             <span>
               {item.label}
-              <strong>{item.value === null ? "Not recorded" : `${item.value}%`}</strong>
+              <strong>{item.value === null ? "Not available" : `${item.value}%`}</strong>
             </span>
             <i>
               <b />
@@ -777,7 +790,7 @@ export function ForensicQueueCard({
       <div className="dashboard-card-header compact-header">
         <div>
           <p>Forensic queue</p>
-          <h3>Pending department responses</h3>
+          <h3>Forensic requests awaiting response</h3>
         </div>
         <StatusBadge tone="forensics">{pendingCount} pending</StatusBadge>
       </div>
@@ -804,7 +817,7 @@ export function QuickActionsPanel({ startAnalysisHref }: { startAnalysisHref: st
     { label: "Create Case", href: "/cases/new", icon: "plus" as const },
     { label: "View Assigned Cases", href: "/cases", icon: "briefcase" as const },
     { label: "Start Case Analysis", href: startAnalysisHref, icon: "activity" as const },
-    { label: "Review Forensic Requests", href: "/dashboard#forensic-queue", icon: "clipboard" as const },
+    { label: "Review Forensic Requests", href: "/oversight", icon: "clipboard" as const },
   ];
 
   return (

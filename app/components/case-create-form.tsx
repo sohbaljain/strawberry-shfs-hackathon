@@ -4,7 +4,6 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { CSSProperties, FormEvent, ReactNode } from "react";
 import {
-  CASE_DRAFT_STORAGE_PREFIX,
   createClientId,
   emptyElectronicEvidenceRecord,
   emptyWitness,
@@ -122,6 +121,7 @@ export function CaseCreateForm() {
   const [form, setForm] = useState<CaseFormState>(initialState);
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   const completedCoreFields = useMemo(
     () => requiredFieldPaths.filter((path) => getTextField(form, path).trim()).length,
@@ -288,12 +288,12 @@ export function CaseCreateForm() {
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmitAttempted(true);
+    setSubmitError("");
 
     if (!isComplete) return;
 
-    const caseId = `CF-${Math.floor(2000 + Math.random() * 7000)}`;
     const draft: FictionalCaseInput = {
-      caseId,
+      caseId: createClientId("draft-case"),
       ...form,
       people: {
         ...form.people,
@@ -309,8 +309,36 @@ export function CaseCreateForm() {
     };
 
     setIsSubmitting(true);
-    window.sessionStorage.setItem(`${CASE_DRAFT_STORAGE_PREFIX}${caseId}`, JSON.stringify(draft));
-    router.push(`/analysis/${caseId}`);
+
+    void fetch("/api/cases", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(draft),
+    })
+      .then(async (response) => {
+        const data = (await response.json().catch(() => null)) as
+          | { caseId?: string; error?: string }
+          | null;
+
+        if (!response.ok || !data?.caseId) {
+          throw new Error(
+            data?.error ||
+              "Case could not be created. Please verify your profile and active posting.",
+          );
+        }
+
+        router.push(`/analysis/${encodeURIComponent(data.caseId)}`);
+      })
+      .catch((error: unknown) => {
+        setSubmitError(
+          error instanceof Error && error.message
+            ? error.message
+            : "Case could not be created right now.",
+        );
+      })
+      .finally(() => {
+        setIsSubmitting(false);
+      });
   };
 
   return (
@@ -677,9 +705,15 @@ export function CaseCreateForm() {
               </p>
             ) : null}
 
+            {submitError ? (
+              <p className="case-form-error" role="alert">
+                {submitError}
+              </p>
+            ) : null}
+
             <button className="button button-primary case-submit-button" type="submit" disabled={isSubmitting || !isComplete}>
               <Icon name="activity" />
-              {isSubmitting ? "Preparing analysis" : "Analyze with Gemini"}
+              {isSubmitting ? "Creating case" : "Create case and open analysis"}
             </button>
 
             <p className="case-form-note">

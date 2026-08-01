@@ -2,6 +2,13 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { CaseAnalysisFlow } from "../../../components/case-analysis-flow";
 import { Icon, PageContainer } from "../../../components/app-shell";
+import {
+  parseCaseInputFromCaseRow,
+  readText,
+  selectSavedAnalysis,
+  type DataRow,
+  type SavedAnalysisVersion,
+} from "../../../lib/case-analysis-store";
 import { createServerComponentClient } from "@/lib/supabase/server";
 
 export default async function AnalysisPlaceholderPage({
@@ -48,8 +55,20 @@ export default async function AnalysisPlaceholderPage({
   }
 
   const caseReference =
-    asText(caseData.case_reference ?? caseData.caseReference ?? caseData.reference ?? caseData.fictional_case_number) ||
+    readText(caseData.case_reference ?? caseData.caseReference ?? caseData.reference ?? caseData.fictional_case_number) ||
     caseId;
+
+  const { data: analysisRows } = await supabase
+    .schema("public")
+    .from("case_analyses")
+    .select("*")
+    .eq("case_id", caseId)
+    .limit(30);
+
+  const initialCaseInput = parseCaseInputFromCaseRow(caseData as DataRow, caseId, caseReference);
+  const saved = selectSavedAnalysis((analysisRows ?? []) as DataRow[], caseId);
+  const initialResponse = saved?.response ?? null;
+  const analysisVersions: SavedAnalysisVersion[] = saved?.versions ?? [];
 
   return (
     <PageContainer
@@ -57,13 +76,13 @@ export default async function AnalysisPlaceholderPage({
       title="Case Intelligence Report"
       description={`Review structured advisory observations for ${caseReference}. All AI output requires authorised officer verification.`}
     >
-      <CaseAnalysisFlow caseId={caseId} caseReference={caseReference} />
+      <CaseAnalysisFlow
+        analysisVersions={analysisVersions}
+        caseId={caseId}
+        caseInput={initialCaseInput}
+        caseReference={caseReference}
+        initialResponse={initialResponse}
+      />
     </PageContainer>
   );
-}
-
-function asText(value: unknown) {
-  if (typeof value === "string") return value.trim();
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return "";
 }

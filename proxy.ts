@@ -6,11 +6,19 @@ export async function proxy(request: NextRequest) {
     request,
   });
   const supabase = createClient(request, response);
+  const pathname = request.nextUrl.pathname;
+  const isCitizenPublicRoute = pathname === "/citizen" || pathname.startsWith("/citizen/");
+
+  if (isCitizenPublicRoute) {
+    return response;
+  }
+
   const { data, error } = await supabase.auth.getClaims();
   const isAuthenticated = Boolean(data?.claims) && !error;
-  const pathname = request.nextUrl.pathname;
+  const isPolicePath = isPoliceOnlyPath(pathname);
+  const isSharedProtectedPath = pathname === "/settings";
 
-  if (isProtectedAppPath(pathname) && !isAuthenticated) {
+  if ((isPolicePath || isSharedProtectedPath) && !isAuthenticated) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/login";
     redirectUrl.search = "";
@@ -33,11 +41,16 @@ export const config = {
   matcher: [
     "/dashboard",
     "/login",
+    "/citizen",
+    "/citizen/:path*",
+    "/citizen/login",
     "/cases/:path*",
     "/analysis/:path*",
     "/case-assistant/:path*",
     "/oversight",
     "/settings",
+    "/citizen-requests",
+    "/citizen-requests/:path*",
   ],
 };
 
@@ -54,11 +67,10 @@ function copyAuthCookies(source: NextResponse, target: NextResponse) {
   return target;
 }
 
-function isProtectedAppPath(pathname: string) {
+function isPoliceOnlyPath(pathname: string) {
   return (
     pathname === "/dashboard" ||
     pathname === "/oversight" ||
-    pathname === "/settings" ||
     pathname.startsWith("/cases") ||
     pathname.startsWith("/analysis") ||
     pathname.startsWith("/case-assistant")

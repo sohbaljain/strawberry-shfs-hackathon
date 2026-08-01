@@ -1,7 +1,8 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import {
   fallbackLanguage,
   getLanguageDirection,
@@ -20,18 +21,33 @@ export type LanguageContextValue = {
 
 const LanguageContext = createContext<LanguageContextValue | null>(null);
 
-export function LanguageProvider({ children }: { children: ReactNode }) {
-  const [language, setLanguageState] = useState<SupportedLanguageCode>(() => readStoredLanguage());
+export function LanguageProvider({
+  children,
+  initialLanguage,
+}: {
+  children: ReactNode;
+  initialLanguage?: SupportedLanguageCode;
+}) {
+  const router = useRouter();
+  const [language, setLanguageState] = useState<SupportedLanguageCode>(() => readStoredLanguage(initialLanguage));
+  const didMountRef = useRef(false);
 
   useEffect(() => {
     writeLanguageToDocument(language);
-  }, [language]);
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      return;
+    }
+
+    router.refresh();
+  }, [language, router]);
 
   const setLanguage = (nextLanguage: SupportedLanguageCode) => {
     setLanguageState(nextLanguage);
 
     try {
       window.localStorage.setItem(LANGUAGE_STORAGE_KEY, nextLanguage);
+      window.document.cookie = `${LANGUAGE_STORAGE_KEY}=${nextLanguage}; path=/; max-age=31536000; samesite=lax`;
     } catch {
       // Ignore local storage write failures.
     }
@@ -59,16 +75,17 @@ export function useLanguage() {
   return context;
 }
 
-export function readStoredLanguage(): SupportedLanguageCode {
+export function readStoredLanguage(preferredLanguage?: SupportedLanguageCode): SupportedLanguageCode {
   if (typeof window === "undefined") {
-    return fallbackLanguage;
+    return preferredLanguage ?? fallbackLanguage;
   }
 
   try {
     const storedLanguage = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
-    return isSupportedLanguageCode(storedLanguage) ? storedLanguage : fallbackLanguage;
+    if (isSupportedLanguageCode(storedLanguage)) return storedLanguage;
+    return preferredLanguage ?? fallbackLanguage;
   } catch {
-    return fallbackLanguage;
+    return preferredLanguage ?? fallbackLanguage;
   }
 }
 

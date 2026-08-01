@@ -1,35 +1,93 @@
+# CaseFlow AI
 
- AI Usage Disclosure
+CaseFlow AI is a platform designed to help police officers organise investigations, spot missing information, track pending work, and understand which cases need attention.
 
-AI tools were used as assistants during the development of this project.
+We built it for the Strawberry Fields Innovation Challenge under the theme **AI for Good** and the sub-theme **Enhancing Forensic Science and Public Safety**.
 
-### GitHub Copilot and OpenAI Codex
-Used to assist with:
+## Why we built it
 
-- writing parts of the code
-- implementing features
-- debugging errors
-- reviewing and improving existing code
+Criminal case information can be spread across many places, including witness statements, evidence records, forensic requests, investigation updates, and station records.
 
-All generated code was reviewed, tested, and modified by the team before being included in the final project.
+When this information is scattered, officers may miss contradictions, evidence gaps, incomplete forensic requests, or long periods of inactivity.
 
-### ChatGPT
-Used to assist with:
+CaseFlow AI brings this information together and presents it in a structured and understandable way.
 
-- explaining and refining feature ideas in detail
-- planning the product flow
-- improving the problem statement
-- structuring functionality
-- preparing documentation and presentation content
+## What it does
 
-The team made the final decisions regarding the project concept, features, logic, and implementation.
+An investigating officer can create a fictional case, add witness statements, evidence details, investigation updates, and forensic information.
 
-### Figma AI
-Used to assist with:
+The system can then use AI to prepare:
 
-- frontend design
-- interface layout
-- visual styling
-- improving the overall user experience
+- a neutral case summary;
+- a structured timeline;
+- contradictions that require human verification;
+- missing information;
+- evidence gaps;
+- suggested next actions; and
+- a case-preparation status.
 
-The final design direction, screen selection, and product decisions were chosen and reviewed by the team.
+The AI does not decide whether someone is guilty or innocent. It also does not recommend arrest, bail, punishment, or sentencing.
+
+Every AI observation must be checked by an authorised officer.
+
+## Different user views
+
+### Investigating Officer
+
+The investigating officer can view assigned cases, create a case, open case details, track actions, review evidence readiness, access AI analysis, and use the case-specific assistant.
+
+### Supervisory Officer
+
+The supervisory view focuses on station-level oversight. It helps senior officers view cases requiring attention, overdue actions, forensic delays, preparation status, and recent activity.
+
+### Citizen Portal
+
+Citizens can submit a structured public-safety request and receive a reference number.
+
+These requests remain separate from official police cases until an authorised officer reviews them.
+
+The Citizen Portal is not an emergency helpline and does not automatically create an FIR.
+
+## Main features
+
+- Role-based dashboards
+- Structured fictional case creation
+- Case timelines
+- Witness-statement comparison
+- Missing-information detection
+- Evidence-gap detection
+- Forensic-request tracking
+- Case-specific AI assistant
+- Supervisory oversight
+- Citizen public-safety requests
+- Multilingual interface
+- Responsive design
+- Row-level access controls
+
+## Technology used
+
+- Next.js
+- TypeScript
+- React
+- Supabase
+- PostgreSQL
+- Google Gemini API
+- Vercel
+
+## Important note
+
+This is a hackathon prototype.
+
+All case information used in the demonstration is fictional.
+
+CaseFlow AI is not an FIR database, emergency-response service, court system, or replacement for police officers.
+
+## Use of AI tools
+
+We used **ChatGPT** and **OpenAI Codex** during development for planning, coding support, debugging, SQL assistance, and documentation.
+
+The team made the final product decisions, tested the application, and completed the implementation.
+
+## Team
+
+**Case Closed**

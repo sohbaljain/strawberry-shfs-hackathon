@@ -237,6 +237,10 @@ function HeroSection() {
               Get Started
               <Icon name="arrow" />
             </a>
+            <a className="button button-secondary" href="/citizen">
+              Citizen Portal
+              <Icon name="shield" />
+            </a>
             <a className="button button-secondary" href="#product-preview">
               <Icon name="play" />
               View Demo

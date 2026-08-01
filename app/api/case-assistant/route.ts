@@ -7,6 +7,7 @@ import {
   validateAnalysisReport,
   validateCaseInput,
 } from "../../lib/caseflow-analysis";
+import { createServerComponentClient } from "@/lib/supabase/server";
 import { isSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/i18n/config";
 import { requestGeminiWithFallback, type GeminiResponse } from "@/lib/gemini-request";
 
@@ -56,6 +57,27 @@ export async function POST(request: Request) {
 
   if (!validation.ok) {
     return Response.json({ error: validation.error }, { status: validation.status });
+  }
+
+  const supabase = await createServerComponentClient();
+  const { data: claimsData, error: claimsError } = await supabase.auth.getClaims();
+
+  if (claimsError || !claimsData?.claims) {
+    return Response.json({ error: "Authentication required." }, { status: 401 });
+  }
+
+  const { data: caseData, error: caseError } = await supabase
+    .schema("public")
+    .from("cases")
+    .select("id")
+    .eq("id", validation.request.caseId)
+    .maybeSingle();
+
+  if (caseError || !caseData?.id) {
+    return Response.json(
+      { error: "Case not found or access is not authorised." },
+      { status: 404 },
+    );
   }
 
   try {

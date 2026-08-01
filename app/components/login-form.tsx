@@ -7,7 +7,9 @@ import { createClient } from "@/lib/supabase/client";
 import { Icon } from "./app-shell";
 import { useLanguage } from "./language-provider";
 
-export function LoginForm() {
+type LoginMode = "police" | "citizen";
+
+export function LoginForm({ mode = "police" }: { mode?: LoginMode }) {
   const router = useRouter();
   const { t } = useLanguage();
   const [email, setEmail] = useState("");
@@ -15,6 +17,7 @@ export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [authError, setAuthError] = useState("");
+  const isCitizenMode = mode === "citizen";
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -34,7 +37,7 @@ export function LoginForm() {
         return;
       }
 
-      router.push("/dashboard");
+      router.push(isCitizenMode ? "/citizen" : "/dashboard");
       router.refresh();
     } catch {
       setAuthError(t("common.authError"));
@@ -59,21 +62,29 @@ export function LoginForm() {
             </span>
             <span>
               <strong>CaseFlow AI</strong>
-              <em>{t("login.brandTag")}</em>
+              <em>{isCitizenMode ? "Citizen demonstration portal" : t("login.brandTag")}</em>
             </span>
           </Link>
 
           <div className="login-context-copy">
-            <p className="page-eyebrow">{t("login.authorisedAccess")}</p>
-            <h1 id="login-title">{t("login.signInToCaseflow")}</h1>
-            <p>{t("login.intro")}</p>
+            <p className="page-eyebrow">{isCitizenMode ? "Citizen access" : t("login.authorisedAccess")}</p>
+            <h1 id="login-title">{isCitizenMode ? "Sign in to Citizen Portal" : t("login.signInToCaseflow")}</h1>
+            <p>
+              {isCitizenMode
+                ? "Use this route for the citizen demonstration workspace only."
+                : t("login.intro")}
+            </p>
           </div>
 
           <div className="login-security-card">
             <Icon name="shield" />
             <div>
-              <strong>{t("login.restrictedAccess")}</strong>
-              <p>{t("login.restrictedAccessCopy")}</p>
+              <strong>{isCitizenMode ? "Demonstration-only flow" : t("login.restrictedAccess")}</strong>
+              <p>
+                {isCitizenMode
+                  ? "Demonstration portal only. Reports submitted here are stored on this device and are not sent to police or emergency services."
+                  : t("login.restrictedAccessCopy")}
+              </p>
             </div>
           </div>
         </div>
@@ -134,11 +145,23 @@ export function LoginForm() {
             <Icon name="arrow" />
           </button>
 
-          <p className="login-privacy-note">{t("login.privacyNote")}</p>
+          <a className="login-citizen-link" href="/citizen">
+            Citizen Portal
+          </a>
+
+          <p className="login-privacy-note">
+            {isCitizenMode
+              ? "Do not use this demonstration portal for emergencies. Contact the appropriate local emergency service."
+              : t("login.privacyNote")}
+          </p>
         </form>
       </section>
 
-      <footer className="login-footer-note">{t("login.emergencyNotice")}</footer>
+      <footer className="login-footer-note">
+        {isCitizenMode
+          ? "Do not use this demonstration portal for emergencies. Contact the appropriate local emergency service."
+          : t("login.emergencyNotice")}
+      </footer>
     </main>
   );
 }

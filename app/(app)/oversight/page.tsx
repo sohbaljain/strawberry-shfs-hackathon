@@ -2,9 +2,37 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Icon, PageContainer } from "../../components/app-shell";
 import { FICTIONAL_DATA_NOTICE } from "../../lib/caseflow-analysis";
+import { DEMO_CITIZEN_REQUESTS } from "@/lib/demo-citizen-requests";
+import {
+  type DataRow,
+  asText,
+  attentionReasons,
+  caseIdFromRow,
+  casePriorityFromCase,
+  caseReferenceFromCase,
+  caseStatusFromCase,
+  caseTitleFromCase,
+  comparePriorityRanks,
+  evidencePercentFromCase,
+  forensicDisciplineLabel,
+  formatDateOrText,
+  formatWaitTime,
+  isActionCompleted,
+  isOverdueAction,
+  isPendingForensicStatus,
+  isSupervisoryRoleCode,
+  normaliseText,
+  postingRoleCode,
+  preparationStatusFromCaseContext,
+  priorityRank,
+  rowEpoch,
+  selectActivePosting,
+  toRows,
+  toTitleCase,
+} from "@/app/lib/officer-workspace";
+import { getWorkspaceContext } from "@/app/lib/workspace-server";
+import { DEMO_STATION_DATA } from "@/lib/demo-dashboard-data";
 import { createServerComponentClient } from "@/lib/supabase/server";
-
-type DataRow = Record<string, unknown>;
 
 type OversightCase = {
   id: string;
@@ -28,6 +56,7 @@ type OversightAction = {
   assignedOfficer: string;
   dueDate: string;
   dueDateValue: Date | null;
+  overdue: boolean;
   status: string;
 };
 
@@ -52,6 +81,7 @@ type ActivityItem = {
 
 type AttentionItem = {
   caseRecord: OversightCase;
+  rank: readonly [number, number, number, number, number, number];
   reason: string;
 };
 
@@ -65,74 +95,298 @@ export default async function OversightPage() {
     redirect("/login");
   }
 
-  const { data: caseData, error: casesError } = await supabase
+  const workspace = await getWorkspaceContext(supabase);
+
+  if (!workspace) {
+    redirect("/login");
+  }
+
+  if (workspace.workspaceRole === "citizen") {
+    redirect("/citizen");
+  }
+
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+
+  if (!userId) {
+    redirect("/login");
+  }
+
+  const { data: postingData, error: postingError } = await supabase
+    .schema("public")
+    .from("user_postings")
+    .select("user_id, organisational_unit_id, role_code, posting_title, valid_from, valid_until, is_primary, is_active")
+    .eq("user_id", userId)
+    .eq("is_active", true)
+    .order("is_primary", { ascending: false })
+    .order("valid_from", { ascending: false })
+    .limit(20);
+
+  const activePosting = selectActivePosting(toRows(postingData));
+  const roleCode = postingRoleCode(activePosting);
+
+  if (postingError || !activePosting) {
+    return (
+      <PageContainer
+        eyebrow="SUPERVISORY WORKSPACE"
+        title="Supervisory Oversight"
+        description="No active posting was found for this account."
+      >
+        <OversightState
+          title="No active posting available"
+          body="Authorised supervisory records are unavailable for this session."
+          icon="briefcase"
+        />
+      </PageContainer>
+    );
+  }
+
+  if (!isSupervisoryRoleCode(roleCode)) {
+    redirect("/dashboard");
+  }
+
+  const stationUnitId = asText(activePosting.organisational_unit_id);
+
+  if (!stationUnitId) {
+    return (
+      <PageContainer
+        eyebrow="SUPERVISORY WORKSPACE"
+        title="Supervisory Oversight"
+        description="Posting scope could not be resolved."
+      >
+        <OversightState
+          title="Missing posting scope"
+          body="Authorised supervisory records are unavailable for this session."
+          icon="alert"
+        />
+      </PageContainer>
+    );
+  }
+
+  const stationResult = await supabase
+    .schema("public")
+    .from("organisational_units")
+    .select("id, parent_unit_id")
+    .eq("id", stationUnitId)
+    .maybeSingle();
+  const subdivisionUnitId = asText(stationResult.data?.parent_unit_id);
+  const subdivisionResult = subdivisionUnitId
+    ? await supabase
+        .schema("public")
+        .from("organisational_units")
+        .select("id, parent_unit_id")
+        .eq("id", subdivisionUnitId)
+        .maybeSingle()
+    : { data: null, error: null };
+  const districtUnitId = asText(subdivisionResult.data?.parent_unit_id);
+
+  if (stationResult.error || !stationResult.data || !districtUnitId) {
+    return (
+      <PageContainer
+        eyebrow="SUPERVISORY WORKSPACE"
+        title="Supervisory Oversight"
+        description="Posting hierarchy could not be resolved."
+      >
+        <OversightState
+          title="Missing district or station scope"
+          body="Authorised supervisory records are unavailable for this session."
+          icon="alert"
+        />
+      </PageContainer>
+    );
+  }
+
+  const caseData = await supabase
     .schema("public")
     .from("cases")
     .select("*")
-    .limit(200);
+    .or(`station_unit_id.eq.${stationUnitId},district_unit_id.eq.${districtUnitId}`)
+    .limit(500);
 
-  const caseRows = Array.isArray(caseData) ? (caseData as DataRow[]) : [];
+  const caseRows = toRows(caseData.data);
   const cases = caseRows.map(normaliseCase).filter(isPresent);
-  const caseIds = cases.map((caseRecord) => caseRecord.id).filter(Boolean);
-  const [actionRows, forensicRows, activityRows] = await Promise.all([
-    fetchCaseRelatedRows(supabase, "case_actions", caseIds, 120),
-    fetchCaseRelatedRows(supabase, "forensic_requests", caseIds, 120),
-    fetchCaseRelatedRows(supabase, "case_activity", caseIds, 120),
-  ]);
+  const caseIds = new Set(cases.map((item) => item.id));
+  const caseIdList = Array.from(caseIds);
 
-  const actions = actionRows.map((row) => normaliseAction(row, cases)).filter(isPresent);
-  const forensicDependencies = forensicRows
-    .map((row) => normaliseForensicDependency(row, cases))
+  const [actionRows, forensicRows, activityRows, analysisRows] = caseIdList.length
+    ? await Promise.all([
+        supabase.schema("public").from("case_actions").select("*").in("case_id", caseIdList).limit(700),
+        supabase.schema("public").from("forensic_requests").select("*").in("case_id", caseIdList).limit(700),
+        supabase.schema("public").from("case_activity").select("*").in("case_id", caseIdList).limit(900),
+        supabase.schema("public").from("case_analyses").select("*").in("case_id", caseIdList).limit(400),
+      ])
+    : [
+        { data: [], error: null },
+        { data: [], error: null },
+        { data: [], error: null },
+        { data: [], error: null },
+      ];
+
+  const forensicRequestRows = toRows(forensicRows.data);
+  const forensicRequestIds = forensicRequestRows
+    .map((row) => asText(row.id ?? row.request_id))
+    .filter(Boolean);
+  const forensicResponses = forensicRequestIds.length
+    ? await supabase
+        .schema("public")
+        .from("forensic_responses")
+        .select("forensic_request_id")
+        .in("forensic_request_id", forensicRequestIds)
+        .limit(1200)
+    : { data: [], error: null };
+
+  const hasLoadError = Boolean(
+    caseData.error ||
+      actionRows.error ||
+      forensicRows.error ||
+      forensicResponses.error ||
+      activityRows.error ||
+      analysisRows.error,
+  );
+
+  const respondedRequestIds = new Set(
+    toRows(forensicResponses.data)
+      .map((row) => asText(row.forensic_request_id))
+      .filter(Boolean),
+  );
+
+  const actions = toRows(actionRows.data)
+    .map((row) => normaliseAction(row, cases))
     .filter(isPresent);
-  const activity = activityRows
+
+  const renderNow = currentEpoch();
+
+  const requests = forensicRequestRows
+    .filter(isPendingForensicStatus)
+    .filter((row) => {
+      const requestId = asText(row.id ?? row.request_id);
+      return requestId ? !respondedRequestIds.has(requestId) : true;
+    })
+    .map((row) => normaliseForensicDependency(row, cases, renderNow))
+    .filter(isPresent);
+
+  const activity = toRows(activityRows.data)
     .map((row) => normaliseActivity(row, cases))
     .filter(isPresent)
     .sort(sortByNewestActivity)
     .slice(0, 8);
-  const attentionQueue = buildAttentionQueue(cases, actions, forensicDependencies).slice(0, 8);
-  const overdueActions = actions.filter(isOverdueAction);
-  const noRecentActivityCases = cases.filter(hasNoRecentActivity);
-  const awaitingForensics = cases.filter((caseRecord) =>
-    isForensicPending(caseRecord.forensicStatus),
-  ).length;
-  const readyForReview = cases.filter((caseRecord) =>
-    normaliseText(caseRecord.preparationStatus).includes("ready"),
-  ).length;
-  const activeCases = cases.filter((caseRecord) => !isClosedStatus(caseRecord.status)).length;
 
+  const analysesByCase = groupByCase(toRows(analysisRows.data), caseIds);
+  const actionsByCase = groupByCase(toRows(actionRows.data), caseIds);
+  const requestsByCase = groupByCase(forensicRequestRows, caseIds);
+  const activityByCase = groupByCase(toRows(activityRows.data), caseIds);
+
+  const attentionQueue = buildAttentionQueue(cases, {
+    actionsByCase,
+    activityByCase,
+    analysesByCase,
+    now: renderNow,
+    requestsByCase,
+  }).slice(0, 8);
   return (
     <PageContainer
-      eyebrow="OFFICER OVERSIGHT"
-      title="My Investigation Oversight"
-      description="Monitor assigned cases, pending actions, forensic dependencies, and preparation risks from one workspace."
+      eyebrow="SUPERVISORY WORKSPACE"
+      title="Supervisory Oversight"
+      description="Monitor station-level investigations, overdue actions, forensic dependencies, preparation risks, and recent officer activity."
     >
+      <SupervisoryScopePanel />
+
       <section className="case-ai-warning dashboard-card" role="note">
         <Icon name="alert" />
         <span>{FICTIONAL_DATA_NOTICE}</span>
       </section>
 
-      {casesError ? (
+      <section className="dashboard-card citizen-oversight-card">
+        <div className="dashboard-card-header compact-header">
+          <div>
+            <p>Citizen Request Oversight</p>
+            <h3>Hardcoded demonstration citizen requests</h3>
+          </div>
+          <Icon name="clipboard" />
+        </div>
+
+        <section className="citizen-request-summary-grid citizen-oversight-summary-grid" aria-label="Citizen request oversight summary">
+          <article className="citizen-card citizen-summary-card">
+            <span>Open Citizen Requests</span>
+            <strong>3</strong>
+          </article>
+          <article className="citizen-card citizen-summary-card">
+            <span>Unreviewed Requests</span>
+            <strong>0</strong>
+          </article>
+          <article className="citizen-card citizen-summary-card">
+            <span>Awaiting Citizen Information</span>
+            <strong>1</strong>
+          </article>
+          <article className="citizen-card citizen-summary-card">
+            <span>Referred for Action</span>
+            <strong>1</strong>
+          </article>
+          <article className="citizen-card citizen-summary-card">
+            <span>Closed Requests</span>
+            <strong>1</strong>
+          </article>
+        </section>
+
+        <div className="priority-table-wrap citizen-request-table-wrap">
+          <table className="priority-case-table citizen-request-table">
+            <caption>Citizen request oversight table for the supervisory officer.</caption>
+            <thead>
+              <tr>
+                <th>Reference</th>
+                <th>Request Type</th>
+                <th>Status</th>
+                <th>Priority</th>
+                <th>Assigned Officer</th>
+                <th>Submitted Date</th>
+                <th>Last Activity</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {DEMO_CITIZEN_REQUESTS.map((request) => (
+                <tr key={request.id}>
+                  <td data-label="Reference"><strong>{request.reference}</strong></td>
+                  <td data-label="Request Type">{request.requestType}</td>
+                  <td data-label="Status">{request.publicStatus}</td>
+                  <td data-label="Priority">{request.priority}</td>
+                  <td data-label="Assigned Officer">{request.assignedOfficer}</td>
+                  <td data-label="Submitted Date">{new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(request.submittedAt))}</td>
+                  <td data-label="Last Activity">{request.lastActivity}</td>
+                  <td data-label="Action">
+                    <Link className="app-link-button" href={`/citizen-requests/${request.id}?mode=supervisory`}>
+                      Open Request
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {hasLoadError ? (
         <OversightState
-          title="Unable to load officer oversight data."
+          title="Unable to load supervisory oversight data."
           body="Please try again after confirming the signed-in account still has access."
           icon="alert"
         />
       ) : (
         <>
-          <section className="oversight-summary-grid" aria-label="Officer oversight summary">
-            <OversightMetric label="Active assigned cases" value={activeCases} tone="purple" />
-            <OversightMetric label="Cases requiring attention" value={attentionQueue.length} tone="danger" />
-            <OversightMetric label="Awaiting forensic response" value={awaitingForensics} tone="warning" />
-            <OversightMetric label="Cases ready for review" value={readyForReview} tone="success" />
-            <OversightMetric label="Overdue actions" value={overdueActions.length} tone="danger" />
-            <OversightMetric label="Cases with no recent activity" value={noRecentActivityCases.length} tone="warning" />
+          <section className="oversight-summary-grid" aria-label="Supervisory oversight summary">
+            <OversightMetric label="Active assigned cases" value={DEMO_STATION_DATA.totals.assignedCases} tone="purple" />
+            <OversightMetric label="Cases requiring attention" value={DEMO_STATION_DATA.totals.casesRequiringAttention} tone="danger" />
+            <OversightMetric label="Awaiting forensic response" value={DEMO_STATION_DATA.totals.awaitingForensicResponse} tone="warning" />
+            <OversightMetric label="Cases ready for review" value={DEMO_STATION_DATA.totals.readyForReview} tone="success" />
+            <OversightMetric label="Overdue actions" value={DEMO_STATION_DATA.totals.overdueActions} tone="danger" />
+            <OversightMetric label="Cases with no recent activity" value={DEMO_STATION_DATA.totals.casesWithNoRecentActivity} tone="warning" />
           </section>
 
           <section className="oversight-layout">
             <AttentionQueue items={attentionQueue} />
             <div className="oversight-stack">
-              <DeadlinePanel actions={actions.slice(0, 10)} />
-              <ForensicDependenciesPanel requests={forensicDependencies.slice(0, 8)} />
+              <DeadlinePanel actions={actions.filter((item) => !isActionCompleted(item.status)).slice(0, 10)} />
+              <ForensicDependenciesPanel requests={requests.slice(0, 8)} />
             </div>
             <EvidenceReadinessPanel cases={cases} />
             <RecentOfficerActivity items={activity} />
@@ -160,11 +414,11 @@ function OversightMetric({
         <span className="stat-icon">
           <Icon name={icon} />
         </span>
-        <span>RLS scoped</span>
+        <span>Demonstration station data</span>
       </div>
       <p>{label}</p>
       <strong>{value}</strong>
-      <em>Visible through the signed-in officer session.</em>
+      <em>Demonstration station summary.</em>
     </article>
   );
 }
@@ -172,11 +426,11 @@ function OversightMetric({
 function AttentionQueue({ items }: { items: AttentionItem[] }) {
   return (
     <section className="dashboard-card oversight-card oversight-span-2">
-      <CardHeader eyebrow="Attention queue" title="Cases requiring officer action" icon="alert" />
+      <CardHeader eyebrow="Attention queue" title="Cases requiring supervisory action" icon="alert" />
       {items.length ? (
         <div className="priority-table-wrap oversight-table-wrap">
           <table className="priority-case-table oversight-table">
-            <caption>Cases requiring attention for the signed-in investigating officer.</caption>
+            <caption>Cases requiring attention for the signed-in supervisory officer.</caption>
             <thead>
               <tr>
                 <th>Case</th>
@@ -220,7 +474,7 @@ function AttentionQueue({ items }: { items: AttentionItem[] }) {
           </table>
         </div>
       ) : (
-        <OversightEmpty>No oversight items require attention.</OversightEmpty>
+        <OversightEmpty>No authorised cases are currently available for this station scope.</OversightEmpty>
       )}
     </section>
   );
@@ -229,33 +483,45 @@ function AttentionQueue({ items }: { items: AttentionItem[] }) {
 function DeadlinePanel({ actions }: { actions: OversightAction[] }) {
   return (
     <section className="dashboard-card oversight-card">
-      <CardHeader eyebrow="Deadlines" title="Assigned actions" icon="check" />
+      <CardHeader eyebrow="Deadlines" title="Assigned actions and deadlines" icon="check" />
       {actions.length ? (
         <div className="oversight-action-list">
-          {actions.map((action) => (
-            <article key={action.id}>
-              <div>
-                <strong>{action.title}</strong>
-                <p>{action.caseReference}</p>
-              </div>
-              <span className={isOverdueAction(action) ? "overdue" : undefined}>
-                {isOverdueAction(action) ? "Overdue" : action.dueDate}
-              </span>
-              <span className={`status-badge status-${statusTone(action.status)}`}>{action.status}</span>
-              <Link className="app-link-button subtle" href={`/cases/${encodeURIComponent(action.caseId)}`}>
-                Open action
-              </Link>
-            </article>
-          ))}
+          {actions.map((action) => {
+            const overdue = action.overdue;
+            return (
+              <article key={action.id}>
+                <div>
+                  <strong>{action.title}</strong>
+                  <p>{action.caseReference}</p>
+                </div>
+                <span className={overdue ? "overdue" : undefined}>
+                  {overdue ? "Overdue" : action.dueDate}
+                </span>
+                <span className={`status-badge status-${statusTone(action.status)}`}>{action.status}</span>
+                <Link className="app-link-button subtle" href={`/cases/${encodeURIComponent(action.caseId)}`}>
+                  Open action
+                </Link>
+              </article>
+            );
+          })}
         </div>
       ) : (
-        <OversightEmpty>No assigned actions found.</OversightEmpty>
+        <OversightEmpty>No overdue actions are available.</OversightEmpty>
       )}
     </section>
   );
 }
 
 function EvidenceReadinessPanel({ cases }: { cases: OversightCase[] }) {
+  if (!cases.length) {
+    return (
+      <section className="dashboard-card oversight-card">
+        <CardHeader eyebrow="Case preparation" title="Preparation status distribution" icon="layers" />
+        <OversightEmpty>Preparation distribution will appear when authorised cases are available.</OversightEmpty>
+      </section>
+    );
+  }
+
   const distribution = buildPreparationDistribution(cases);
 
   return (
@@ -281,7 +547,7 @@ function EvidenceReadinessPanel({ cases }: { cases: OversightCase[] }) {
 function ForensicDependenciesPanel({ requests }: { requests: ForensicDependency[] }) {
   return (
     <section className="dashboard-card oversight-card">
-      <CardHeader eyebrow="Forensic dependencies" title="Pending requests" icon="file" />
+      <CardHeader eyebrow="Forensic dependencies" title="Forensic dependencies" icon="file" />
       {requests.length ? (
         <div className="oversight-forensic-list">
           {requests.map((request) => (
@@ -302,7 +568,7 @@ function ForensicDependenciesPanel({ requests }: { requests: ForensicDependency[
           ))}
         </div>
       ) : (
-        <OversightEmpty>No forensic dependencies recorded.</OversightEmpty>
+        <OversightEmpty>No pending forensic dependencies are available.</OversightEmpty>
       )}
     </section>
   );
@@ -311,7 +577,7 @@ function ForensicDependenciesPanel({ requests }: { requests: ForensicDependency[
 function RecentOfficerActivity({ items }: { items: ActivityItem[] }) {
   return (
     <section className="dashboard-card oversight-card oversight-span-2">
-      <CardHeader eyebrow="Recent activity" title="Latest officer activity" icon="activity" />
+      <CardHeader eyebrow="Recent activity" title="Recent supervisory activity" icon="activity" />
       {items.length ? (
         <div className="case-activity-log">
           {items.map((item, index) => (
@@ -327,8 +593,42 @@ function RecentOfficerActivity({ items }: { items: ActivityItem[] }) {
           ))}
         </div>
       ) : (
-        <OversightEmpty>No recent officer activity found.</OversightEmpty>
+        <OversightEmpty>No recent supervisory activity is available.</OversightEmpty>
       )}
+    </section>
+  );
+}
+
+function SupervisoryScopePanel() {
+  const scope = DEMO_STATION_DATA.scope;
+
+  return (
+    <section className="dashboard-card oversight-card oversight-scope-card" aria-label="Supervisory station scope">
+      <div className="dashboard-card-header compact-header">
+        <div>
+          <p>Demonstration station summary</p>
+          <h3>{scope.stationViewLabel}</h3>
+        </div>
+        <Icon name="layers" />
+      </div>
+      <div className="oversight-scope-grid">
+        <div>
+          <span>Police station</span>
+          <strong>{scope.policeStation}</strong>
+        </div>
+        <div>
+          <span>Subdivision</span>
+          <strong>{scope.subdivision}</strong>
+        </div>
+        <div>
+          <span>District</span>
+          <strong>{scope.district}</strong>
+        </div>
+        <div>
+          <span>State</span>
+          <strong>{scope.state}</strong>
+        </div>
+      </div>
     </section>
   );
 }
@@ -375,182 +675,167 @@ function OversightEmpty({ children }: { children: string }) {
   return <p className="case-detail-empty">{children}</p>;
 }
 
-async function fetchCaseRelatedRows(
-  supabase: Awaited<ReturnType<typeof createServerComponentClient>>,
-  table: string,
-  caseIds: string[],
-  limit: number,
-) {
-  if (!caseIds.length) return [];
+function groupByCase(rows: DataRow[], caseIds: Set<string>) {
+  const grouped = new Map<string, DataRow[]>();
 
-  const orderedResult = await supabase
-    .schema("public")
-    .from(table)
-    .select("*")
-    .in("case_id", caseIds)
-    .order("created_at", { ascending: false })
-    .limit(limit);
+  rows.forEach((row) => {
+    const caseId = caseIdFromRow(row);
+    if (!caseId || !caseIds.has(caseId)) return;
 
-  if (!orderedResult.error && Array.isArray(orderedResult.data)) {
-    return orderedResult.data as DataRow[];
-  }
+    const current = grouped.get(caseId) ?? [];
+    current.push(row);
+    grouped.set(caseId, current);
+  });
 
-  const fallbackResult = await supabase
-    .schema("public")
-    .from(table)
-    .select("*")
-    .in("case_id", caseIds)
-    .limit(limit);
-
-  if (fallbackResult.error || !Array.isArray(fallbackResult.data)) return [];
-
-  return fallbackResult.data as DataRow[];
+  return grouped;
 }
 
 function normaliseCase(row: DataRow): OversightCase | null {
-  const id = asText(row.id ?? row.case_id ?? row.caseId);
-  const reference = asText(
-    row.case_reference ??
-      row.caseReference ??
-      row.reference ??
-      row.fictional_case_number ??
-      row.fir_number ??
-      row.case_number,
-  );
-  const title = asText(row.title ?? row.case_title ?? row.caseTitle);
-
-  if (!id && !reference && !title) return null;
+  const id = caseIdFromRow(row);
+  if (!id) return null;
 
   return {
-    evidenceCompleteness: asPercentage(
-      row.evidence_completeness ??
-        row.evidenceCompleteness ??
-        row.evidence_readiness ??
-        row.preparation_progress,
-    ),
-    forensicStatus:
-      asText(row.forensic_status ?? row.forensicStatus ?? row.forensics_status) || "Not recorded",
-    id: id || reference || title,
-    lastActivity: formatDateOrText(
-      row.last_activity ?? row.lastActivity ?? row.last_activity_at ?? row.updated_at ?? row.created_at,
-    ),
-    lastActivityDate: parseDate(row.last_activity_at ?? row.updated_at ?? row.created_at),
-    preparationStatus:
-      asText(row.case_preparation_status ?? row.preparation_status ?? row.preparationStatus) ||
-      "Information incomplete",
-    priority: toTitleCase(asText(row.priority) || "Unassigned"),
-    reference: reference || id || "Unreferenced",
-    status: toTitleCase(asText(row.status) || "Open"),
-    title: title || "Untitled case",
-    verificationStatus:
-      asText(row.officer_verification_status ?? row.verification_status ?? row.review_status) ||
-      "Not reviewed",
+    evidenceCompleteness: evidencePercentFromCase(row),
+    forensicStatus: toTitleCase(asText(row.forensic_status ?? row.forensicStatus ?? row.forensics_status) || "No forensic request"),
+    id,
+    lastActivity: formatDateOrText(row.last_activity ?? row.lastActivity ?? row.last_activity_at ?? row.updated_at ?? row.created_at),
+    lastActivityDate: rowEpoch(row, ["last_activity_at", "updated_at", "created_at"])
+      ? new Date(rowEpoch(row, ["last_activity_at", "updated_at", "created_at"]))
+      : null,
+    preparationStatus: toTitleCase(asText(row.case_preparation_status ?? row.preparation_status ?? row.preparationStatus) || "Information incomplete"),
+    priority: casePriorityFromCase(row),
+    reference: caseReferenceFromCase(row) || id,
+    status: caseStatusFromCase(row),
+    title: caseTitleFromCase(row) || "Untitled case",
+    verificationStatus: toTitleCase(asText(row.officer_verification_status ?? row.verification_status ?? row.review_status) || "Not reviewed"),
   };
 }
 
 function normaliseAction(row: DataRow, cases: OversightCase[]): OversightAction | null {
-  const caseId = asText(row.case_id ?? row.caseId);
+  const caseId = caseIdFromRow(row);
   const caseRecord = cases.find((item) => item.id === caseId);
   const title = asText(row.title ?? row.action_title ?? row.task ?? row.description);
+  if (!caseRecord || !title) return null;
 
-  if (!caseId || !caseRecord || !title) return null;
-
-  const dueDateValue = parseDate(row.due_date ?? row.due_at ?? row.deadline);
+  const dueDateEpoch = rowEpoch(row, ["due_at", "due_date", "deadline"]);
 
   return {
-    assignedOfficer:
-      asText(row.assigned_officer ?? row.assigned_officer_name ?? row.owner ?? row.officer_name) ||
-      "Not recorded",
+    assignedOfficer: asText(row.assigned_officer ?? row.assigned_officer_name ?? row.owner ?? row.officer_name) || "Unassigned",
     caseId,
     caseReference: caseRecord.reference,
-    dueDate: formatDateOrText(row.due_date ?? row.due_at ?? row.deadline),
-    dueDateValue,
+    dueDate: dueDateEpoch ? formatDateOrText(new Date(dueDateEpoch).toISOString()) : "No due date",
+    dueDateValue: dueDateEpoch ? new Date(dueDateEpoch) : null,
     id: asText(row.id) || `${caseId}-${title}`,
-    status: toTitleCase(asText(row.status) || "Open"),
+    overdue: isOverdueAction(row),
+    status: toTitleCase(asText(row.status ?? row.action_status) || "Open"),
     title,
   };
 }
 
-function normaliseForensicDependency(
-  row: DataRow,
-  cases: OversightCase[],
-): ForensicDependency | null {
-  const caseId = asText(row.case_id ?? row.caseId);
+function normaliseForensicDependency(row: DataRow, cases: OversightCase[], now: number): ForensicDependency | null {
+  const caseId = caseIdFromRow(row);
   const caseRecord = cases.find((item) => item.id === caseId);
-  const status = toTitleCase(asText(row.status ?? row.request_status) || "Not recorded");
+  if (!caseRecord) return null;
 
-  if (!caseId || !caseRecord) return null;
+  const waitEpoch = rowEpoch(row, ["submitted_at", "created_at", "requested_at"]);
 
   return {
     caseId,
     caseReference: caseRecord.reference,
-    discipline:
-      asText(row.discipline ?? row.forensic_discipline ?? row.department ?? row.request_type) ||
-      "Forensic request",
+    discipline: forensicDisciplineLabel(row.discipline ?? row.forensic_discipline ?? row.department ?? row.request_type),
     id: asText(row.id ?? row.request_id) || `${caseId}-forensic`,
-    missingRequirements:
-      asText(row.missing_requirements ?? row.requirements_missing ?? row.notes) ||
-      "No missing requirements recorded.",
-    status,
-    timeWaiting: timeSince(row.requested_at ?? row.created_at ?? row.submitted_at),
+    missingRequirements: asText(row.missing_requirements ?? row.requirements_missing ?? row.notes) || "No missing requirements noted.",
+    status: toTitleCase(asText(row.status ?? row.request_status) || "Pending"),
+    timeWaiting: waitEpoch ? `${formatWaitTime(waitEpoch, now)} waiting` : "Waiting time not available",
   };
 }
 
 function normaliseActivity(row: DataRow, cases: OversightCase[]): ActivityItem | null {
-  const caseId = asText(row.case_id ?? row.caseId);
+  const caseId = caseIdFromRow(row);
   const caseRecord = cases.find((item) => item.id === caseId);
+  if (!caseRecord) return null;
 
-  if (!caseId || !caseRecord) return null;
+  const timestampEpoch = rowEpoch(row, ["created_at", "timestamp", "event_at", "occurred_at"]);
 
   return {
     action: asText(row.action ?? row.event ?? row.activity ?? row.summary) || "Case activity recorded",
-    actor: asText(row.actor ?? row.actor_name ?? row.created_by ?? row.officer_name) || "Not recorded",
+    actor: asText(row.actor ?? row.actor_name ?? row.created_by ?? row.officer_name) || "System",
     caseId,
     caseReference: caseRecord.reference,
-    timestamp: formatDateOrText(row.created_at ?? row.timestamp ?? row.event_at ?? row.occurred_at),
-    timestampDate: parseDate(row.created_at ?? row.timestamp ?? row.event_at ?? row.occurred_at),
+    timestamp: timestampEpoch ? formatDateOrText(new Date(timestampEpoch).toISOString()) : "Not available",
+    timestampDate: timestampEpoch ? new Date(timestampEpoch) : null,
   };
 }
 
 function buildAttentionQueue(
   cases: OversightCase[],
-  actions: OversightAction[],
-  requests: ForensicDependency[],
+  context: {
+    actionsByCase: Map<string, DataRow[]>;
+    activityByCase: Map<string, DataRow[]>;
+    analysesByCase: Map<string, DataRow[]>;
+    now: number;
+    requestsByCase: Map<string, DataRow[]>;
+  },
 ): AttentionItem[] {
   return cases
     .map((caseRecord) => {
-      const reason = attentionReason(caseRecord, actions, requests);
-      return reason ? { caseRecord, reason } : null;
+      const caseActions = context.actionsByCase.get(caseRecord.id) ?? [];
+      const caseRequests = (context.requestsByCase.get(caseRecord.id) ?? []).filter(isPendingForensicStatus);
+      const caseActivities = context.activityByCase.get(caseRecord.id) ?? [];
+      const evidencePercent = caseRecord.evidenceCompleteness;
+      const hasOverdue = caseActions.some((row) => isOverdueAction(row, context.now));
+      const hasBlocked = caseActions.some((row) => normaliseText(asText(row.status ?? row.action_status)).includes("blocked"));
+      const recentActivityEpoch = Math.max(
+        caseRecord.lastActivityDate?.valueOf() ?? 0,
+        ...caseActivities.map((row) => rowEpoch(row)),
+      );
+      const preparation = preparationStatusFromCaseContext({
+        analyses: context.analysesByCase.get(caseRecord.id) ?? [],
+        caseRow: {
+          case_preparation_status: caseRecord.preparationStatus,
+          evidence_completeness: evidencePercent,
+        },
+        evidencePercent,
+        hasBlockedActions: hasBlocked,
+        hasOverdueActions: hasOverdue,
+        hasPendingForensics: caseRequests.length > 0,
+        now: context.now,
+        recentActivityEpoch,
+      });
+
+      const noRecentActivity = hasNoRecentActivity(caseRecord);
+      const reasons = attentionReasons({
+        evidencePercent,
+        hasBlockedActions: hasBlocked,
+        hasOverdueActions: hasOverdue,
+        hasPendingForensics: caseRequests.length > 0,
+        noRecentActivity,
+        preparationStatus: preparation.status,
+      });
+
+      const rank = priorityRank({ priority: caseRecord.priority }, {
+        blockedActionCount: hasBlocked ? 1 : 0,
+        evidencePercent,
+        hasMissingCriticalInformation: preparation.status === "Missing critical information",
+        overdueActionCount: hasOverdue ? 1 : 0,
+        recentActivityEpoch,
+      });
+
+      if (!reasons.length) {
+        return {
+          caseRecord: { ...caseRecord, preparationStatus: preparation.status },
+          rank,
+          reason: "No active risks",
+        };
+      }
+
+      return {
+        caseRecord: { ...caseRecord, preparationStatus: preparation.status },
+        rank,
+        reason: reasons[0].replace(/(^\w|\s\w)/g, (letter) => letter.toUpperCase()),
+      };
     })
-    .filter(isPresent)
-    .sort((a, b) => priorityRank(a.caseRecord.priority) - priorityRank(b.caseRecord.priority));
-}
-
-function attentionReason(
-  caseRecord: OversightCase,
-  actions: OversightAction[],
-  requests: ForensicDependency[],
-) {
-  const caseActions = actions.filter((action) => action.caseId === caseRecord.id);
-  const caseRequests = requests.filter((request) => request.caseId === caseRecord.id);
-  const preparation = normaliseText(caseRecord.preparationStatus);
-
-  if (hasNoRecentActivity(caseRecord)) return "No recent activity";
-  if (caseRecord.evidenceCompleteness !== null && caseRecord.evidenceCompleteness < 60) {
-    return "Missing evidence";
-  }
-  if (preparation.includes("chain") || preparation.includes("custody")) {
-    return "Incomplete chain of custody";
-  }
-  if (caseActions.some(isOverdueAction)) return "Overdue action";
-  if (caseRequests.some((request) => isForensicPending(request.status))) {
-    return "Pending forensic request";
-  }
-  if (!normaliseText(caseRecord.verificationStatus).includes("review")) {
-    return "Missing officer verification";
-  }
-
-  return "";
+    .sort((a, b) => comparePriorityRanks(a.rank, b.rank));
 }
 
 function buildPreparationDistribution(cases: OversightCase[]) {
@@ -564,9 +849,7 @@ function buildPreparationDistribution(cases: OversightCase[]) {
   const total = Math.max(cases.length, 1);
 
   return labels.map((label) => {
-    const count = cases.filter((caseRecord) =>
-      normalisePreparationStatus(caseRecord.preparationStatus) === label
-    ).length;
+    const count = cases.filter((caseRecord) => normaliseText(caseRecord.preparationStatus) === normaliseText(label)).length;
 
     return {
       count,
@@ -576,18 +859,8 @@ function buildPreparationDistribution(cases: OversightCase[]) {
   });
 }
 
-function normalisePreparationStatus(value: string) {
-  const text = normaliseText(value);
-
-  if (text.includes("ready")) return "Ready for review";
-  if (text.includes("clarification")) return "Needs clarification";
-  if (text.includes("critical")) return "Missing critical information";
-  if (text.includes("forensic")) return "Awaiting forensic material";
-  return "Information incomplete";
-}
-
 function EvidenceCompleteness({ value }: { value: number | null }) {
-  if (value === null) return <span className="cases-muted-value">Not recorded</span>;
+  if (value === null) return <span className="cases-muted-value">Not available</span>;
 
   return (
     <div className="readiness-cell compact-readiness">
@@ -606,33 +879,8 @@ function hasNoRecentActivity(caseRecord: OversightCase) {
   return ageMs > noRecentActivityDays * 24 * 60 * 60 * 1000;
 }
 
-function isOverdueAction(action: OversightAction) {
-  return Boolean(
-    action.dueDateValue &&
-      action.dueDateValue.valueOf() < Date.now() &&
-      !isClosedStatus(action.status),
-  );
-}
-
-function isForensicPending(value: string) {
-  const text = normaliseText(value);
-  return text.includes("pending") || text.includes("awaiting") || text.includes("requested");
-}
-
-function isClosedStatus(value: string) {
-  const text = normaliseText(value);
-  return text.includes("closed") || text.includes("resolved") || text.includes("complete");
-}
-
 function sortByNewestActivity(a: ActivityItem, b: ActivityItem) {
   return (b.timestampDate?.valueOf() ?? 0) - (a.timestampDate?.valueOf() ?? 0);
-}
-
-function priorityRank(value: string) {
-  const text = normaliseText(value);
-  if (text.includes("high") || text.includes("urgent")) return 0;
-  if (text.includes("medium")) return 1;
-  return 2;
 }
 
 function statusTone(status: string) {
@@ -656,68 +904,10 @@ function priorityTone(priority: string) {
   return "low";
 }
 
-function asPercentage(value: unknown) {
-  const numericValue =
-    typeof value === "number" ? value : Number.parseFloat(asText(value).replace("%", ""));
-
-  if (!Number.isFinite(numericValue)) return null;
-
-  return Math.min(100, Math.max(0, Math.round(numericValue)));
-}
-
-function timeSince(value: unknown) {
-  const date = parseDate(value);
-  if (!date) return "Waiting time not recorded";
-
-  const ageMs = Math.max(0, Date.now() - date.valueOf());
-  const days = Math.floor(ageMs / (24 * 60 * 60 * 1000));
-  const hours = Math.floor((ageMs / (60 * 60 * 1000)) % 24);
-
-  if (days > 0) return `${days}d ${hours}h waiting`;
-  return `${hours}h waiting`;
-}
-
-function formatDateOrText(value: unknown) {
-  const text = asText(value);
-  if (!text) return "Not recorded";
-
-  const date = parseDate(text);
-  if (!date) return text;
-
-  return new Intl.DateTimeFormat("en-IN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
-}
-
-function parseDate(value: unknown) {
-  const text = asText(value);
-  if (!text) return null;
-
-  const date = new Date(text);
-  const looksLikeDate = Number.isFinite(date.valueOf()) && /\d{4}-\d{2}-\d{2}|T\d{2}:/.test(text);
-
-  return looksLikeDate ? date : null;
-}
-
-function normaliseText(value: string) {
-  return value.trim().toLowerCase();
-}
-
-function toTitleCase(value: string) {
-  return value
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function asText(value: unknown) {
-  if (typeof value === "string") return value.trim();
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return "";
-}
-
 function isPresent<T>(value: T | null | undefined): value is T {
   return value !== null && value !== undefined;
+}
+
+function currentEpoch() {
+  return Date.now();
 }

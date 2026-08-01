@@ -3,9 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { isSupportedLanguageCode, supportedLanguageCodes } from "@/lib/i18n/config";
+import { supportedLanguageCodes } from "@/lib/i18n/config";
 import { Icon } from "./app-shell";
-import { languageName, readStoredLanguage, useLanguage, type LanguageCode } from "./language-provider";
+import { languageName, useLanguage, type LanguageCode } from "./language-provider";
 
 export type SettingsField = {
   label: string;
@@ -21,8 +21,8 @@ export type SettingsWorkspaceProps = {
 type Preferences = {
   appearance: "light" | "dark" | "system";
   compactDensity: boolean;
-  language: LanguageCode;
   reducedMotion: boolean;
+  sidebarCollapsed: boolean;
 };
 
 const preferencesStorageKey = "caseflow:interface-preferences";
@@ -33,8 +33,8 @@ const legacyChatStoragePrefix = "caseflow:case-chat:";
 const defaultPreferences: Preferences = {
   appearance: "system",
   compactDensity: false,
-  language: "en",
   reducedMotion: false,
+  sidebarCollapsed: false,
 };
 
 export function SettingsWorkspace({
@@ -42,7 +42,7 @@ export function SettingsWorkspace({
   postingFields,
   sessionFields,
 }: SettingsWorkspaceProps) {
-  const { setLanguage, t } = useLanguage();
+  const { language, setLanguage, t } = useLanguage();
   const router = useRouter();
   const [preferences, setPreferences] = useState<Preferences>(defaultPreferences);
   const [chatCount, setChatCount] = useState(0);
@@ -53,8 +53,7 @@ export function SettingsWorkspace({
     const timeout = window.setTimeout(() => {
       const storedPreferences = readPreferences();
       setPreferences(storedPreferences);
-      setLanguage(storedPreferences.language || readStoredLanguage());
-      applyAppearance(storedPreferences.appearance);
+      applyInterfacePreferences(storedPreferences);
       setChatCount(countLocalChats());
     }, 0);
 
@@ -64,8 +63,7 @@ export function SettingsWorkspace({
   const updatePreferences = (nextPreferences: Preferences) => {
     setPreferences(nextPreferences);
     writePreferences(nextPreferences);
-    setLanguage(nextPreferences.language);
-    applyAppearance(nextPreferences.appearance);
+    applyInterfacePreferences(nextPreferences);
   };
 
   const clearLocalChats = () => {
@@ -96,14 +94,15 @@ export function SettingsWorkspace({
 
   const preferenceSummary = useMemo(
     () => [
-      t("settings.languageSummary", { name: languageName(preferences.language) }),
+      t("settings.languageSummary", { name: languageName(language) }),
       t("settings.appearanceSummary", { value: preferences.appearance }),
       preferences.reducedMotion ? t("settings.reducedMotionEnabled") : t("settings.standardMotion"),
       preferences.compactDensity
         ? t("settings.compactDensityEnabled")
         : t("settings.comfortableDensity"),
+      preferences.sidebarCollapsed ? "Sidebar: collapsed" : "Sidebar: expanded",
     ],
-    [preferences, t],
+    [language, preferences, t],
   );
 
   return (
@@ -122,13 +121,8 @@ export function SettingsWorkspace({
           <label>
             <span>{t("common.language")}</span>
             <select
-              value={preferences.language}
-              onChange={(event) =>
-                updatePreferences({
-                  ...preferences,
-                  language: event.target.value as LanguageCode,
-                })
-              }
+              value={language}
+              onChange={(event) => setLanguage(event.target.value as LanguageCode)}
             >
               {supportedLanguageCodes.map((code) => (
                 <option key={code} value={code}>
@@ -139,7 +133,7 @@ export function SettingsWorkspace({
           </label>
 
           <label>
-            <span>{t("settings.appearanceSummary", { value: "" }).replace(": ", "")}</span>
+            <span>Appearance</span>
             <select
               value={preferences.appearance}
               onChange={(event) =>
@@ -172,6 +166,16 @@ export function SettingsWorkspace({
               updatePreferences({
                 ...preferences,
                 compactDensity: checked,
+              })
+            }
+          />
+          <ToggleControl
+            checked={preferences.sidebarCollapsed}
+            label="Sidebar collapsed"
+            onChange={(checked) =>
+              updatePreferences({
+                ...preferences,
+                sidebarCollapsed: checked,
               })
             }
           />
@@ -261,7 +265,7 @@ function SettingsFieldGrid({ fields }: { fields: SettingsField[] }) {
       {fields.map((field) => (
         <div key={field.label}>
           <span>{field.label}</span>
-          <strong>{field.value || "Not recorded"}</strong>
+          <strong>{field.value || "-"}</strong>
         </div>
       ))}
     </div>
@@ -290,15 +294,11 @@ function ToggleControl({
 }
 
 function readPreferences(): Preferences {
-  const persistedLanguage = readStoredLanguage();
-
   try {
     const raw = window.localStorage.getItem(preferencesStorageKey);
-    if (!raw) return { ...defaultPreferences, language: persistedLanguage };
+    if (!raw) return defaultPreferences;
 
     const parsed = JSON.parse(raw) as Partial<Preferences>;
-
-    const nextLanguage = isSupportedLanguageCode(parsed.language) ? parsed.language : persistedLanguage;
 
     return {
       appearance:
@@ -306,11 +306,11 @@ function readPreferences(): Preferences {
           ? parsed.appearance
           : defaultPreferences.appearance,
       compactDensity: Boolean(parsed.compactDensity),
-      language: nextLanguage,
       reducedMotion: Boolean(parsed.reducedMotion),
+      sidebarCollapsed: Boolean(parsed.sidebarCollapsed),
     };
   } catch {
-    return { ...defaultPreferences, language: persistedLanguage };
+    return defaultPreferences;
   }
 }
 
@@ -332,6 +332,29 @@ function applyAppearance(appearance: Preferences["appearance"]) {
 
   window.localStorage.setItem("caseflow-theme", resolvedAppearance);
   document.documentElement.dataset.theme = resolvedAppearance;
+  window.dispatchEvent(
+    new CustomEvent("caseflow:theme-change", {
+      detail: {
+        theme: resolvedAppearance,
+      },
+    }),
+  );
+}
+
+function applyInterfacePreferences(preferences: Preferences) {
+  applyAppearance(preferences.appearance);
+  document.documentElement.dataset.compactDensity = String(preferences.compactDensity);
+  document.documentElement.dataset.reducedMotion = String(preferences.reducedMotion);
+
+  try {
+    const raw = window.localStorage.getItem(preferencesStorageKey);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    parsed.sidebarCollapsed = preferences.sidebarCollapsed;
+    window.localStorage.setItem("caseflow-sidebar-collapsed", String(preferences.sidebarCollapsed));
+    window.localStorage.setItem(preferencesStorageKey, JSON.stringify(parsed));
+  } catch {
+    // Ignore storage write failures.
+  }
 }
 
 function countLocalChats() {

@@ -7,6 +7,7 @@ type CasesPageProps = {
   searchParams: Promise<{
     q?: string | string[];
     status?: string | string[];
+    sort?: string | string[];
   }>;
 };
 
@@ -15,11 +16,14 @@ type CaseRow = Record<string, unknown>;
 type CaseRecord = {
   evidenceCompleteness: number | null;
   forensicStatus: string;
+  forensicStatusRaw: string;
   id: string;
   lastActivity: string;
+  lastActivityEpoch: number;
   priority: string;
   reference: string;
   status: string;
+  statusRaw: string;
   title: string;
 };
 
@@ -36,6 +40,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
   const params = await searchParams;
   const searchQuery = asSingleValue(params.q).trim();
   const selectedStatus = normaliseText(asSingleValue(params.status));
+  const selectedSort = normaliseText(asSingleValue(params.sort));
   const supabase = await createServerComponentClient();
   const { data: claimsData, error: claimsError } = await supabase.auth.getClaims();
 
@@ -45,7 +50,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
 
   const { data, error } = await supabase.schema("public").from("cases").select("*").limit(100);
   const cases = Array.isArray(data) ? data.map(normaliseCaseRow).filter(isPresent) : [];
-  const visibleCases = filterCases(cases, searchQuery, selectedStatus);
+  const visibleCases = sortCases(filterCases(cases, searchQuery, selectedStatus), selectedSort);
 
   return (
     <PageContainer
@@ -82,6 +87,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
               />
             </label>
             {selectedStatus ? <input name="status" type="hidden" value={selectedStatus} /> : null}
+            {selectedSort ? <input name="sort" type="hidden" value={selectedSort} /> : null}
             <button className="app-link-button" type="submit">
               Search
               <Icon name="filter" />
@@ -101,10 +107,33 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
                 <Link
                   aria-current={isActive ? "page" : undefined}
                   className={isActive ? "active" : undefined}
-                  href={buildCasesHref(searchQuery, item.value)}
+                  href={buildCasesHref(searchQuery, item.value, selectedSort || "last-activity")}
                   key={item.label}
                 >
                   {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+
+          <nav className="cases-status-filter" aria-label="Sort case results">
+            {[
+              ["Priority", "priority"],
+              ["Last activity", "last-activity"],
+              ["Evidence completeness", "evidence"],
+              ["Forensic status", "forensic"],
+              ["Case reference", "reference"],
+            ].map(([label, value]) => {
+              const isActive = selectedSort === value || (!selectedSort && value === "last-activity");
+
+              return (
+                <Link
+                  aria-current={isActive ? "page" : undefined}
+                  className={isActive ? "active" : undefined}
+                  href={buildCasesHref(searchQuery, selectedStatus, value)}
+                  key={label}
+                >
+                  {label}
                 </Link>
               );
             })}
@@ -125,11 +154,11 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
                 <tr>
                   <th>Case reference</th>
                   <th>Title</th>
-                  <th>Status</th>
+                  <th>Case status</th>
                   <th>Priority</th>
                   <th>Last activity</th>
                   <th>Evidence</th>
-                  <th>Forensics</th>
+                  <th>Forensic request status</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -142,10 +171,10 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
                       </Link>
                     </td>
                     <td data-label="Title">
-                      <strong className="cases-title-cell">{record.title}</strong>
+                      <strong className="cases-title-cell" title={record.title}>{record.title}</strong>
                     </td>
                     <td data-label="Status">
-                      <span className={`status-badge status-${statusTone(record.status)}`}>
+                      <span className={`status-badge status-${statusTone(record.statusRaw)}`}>
                         {record.status}
                       </span>
                     </td>
@@ -174,7 +203,7 @@ export default async function CasesPage({ searchParams }: CasesPageProps) {
           <CasesState
             icon="briefcase"
             title="No assigned cases found."
-            body="Cases will appear here when Supabase RLS permits the signed-in officer to view them."
+            body="Cases appear when the signed-in officer has active authorised assignments through RLS."
           />
         )}
       </section>
@@ -236,15 +265,21 @@ function normaliseCaseRow(row: CaseRow): CaseRecord | null {
         row.evidence_readiness ??
         row.preparation_progress,
     ),
-    forensicStatus:
-      asText(row.forensic_status ?? row.forensicStatus ?? row.forensics_status) || "Not recorded",
+    forensicStatusRaw: asText(row.forensic_status ?? row.forensicStatus ?? row.forensics_status) || "not_available",
+    forensicStatus: toTitleCase(
+      asText(row.forensic_status ?? row.forensicStatus ?? row.forensics_status) || "Not available",
+    ),
     id,
     lastActivity: formatLastActivity(
       row.last_activity ?? row.lastActivity ?? row.last_activity_at ?? row.updated_at ?? row.created_at,
     ),
+    lastActivityEpoch: parseEpoch(
+      row.last_activity ?? row.lastActivity ?? row.last_activity_at ?? row.updated_at ?? row.created_at,
+    ),
     priority: toTitleCase(asText(row.priority) || "Unassigned"),
     reference: reference || id || "Unreferenced",
-    status: toTitleCase(asText(row.status) || "Open"),
+    statusRaw: asText(row.status ?? row.case_status) || "open",
+    status: toTitleCase(asText(row.status ?? row.case_status) || "Open"),
     title: title || "Untitled case",
   };
 }
@@ -263,11 +298,39 @@ function filterCases(cases: CaseRecord[], searchQuery: string, selectedStatus: s
   });
 }
 
-function buildCasesHref(searchQuery: string, status: string) {
+function sortCases(cases: CaseRecord[], sort: string) {
+  const result = [...cases];
+
+  if (sort === "priority") {
+    const rank = { high: 3, medium: 2, low: 1 };
+    return result.sort((a, b) => {
+      const aRank = rank[normaliseText(a.priority) as keyof typeof rank] ?? 0;
+      const bRank = rank[normaliseText(b.priority) as keyof typeof rank] ?? 0;
+      return bRank - aRank;
+    });
+  }
+
+  if (sort === "evidence") {
+    return result.sort((a, b) => (b.evidenceCompleteness ?? -1) - (a.evidenceCompleteness ?? -1));
+  }
+
+  if (sort === "forensic") {
+    return result.sort((a, b) => a.forensicStatus.localeCompare(b.forensicStatus));
+  }
+
+  if (sort === "reference") {
+    return result.sort((a, b) => a.reference.localeCompare(b.reference));
+  }
+
+  return result.sort((a, b) => b.lastActivityEpoch - a.lastActivityEpoch);
+}
+
+function buildCasesHref(searchQuery: string, status: string, sort?: string) {
   const params = new URLSearchParams();
 
   if (searchQuery) params.set("q", searchQuery);
   if (status) params.set("status", status);
+  if (sort) params.set("sort", sort);
 
   const query = params.toString();
   return query ? `/cases?${query}` : "/cases";
@@ -305,6 +368,13 @@ function formatLastActivity(value: unknown) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+function parseEpoch(value: unknown) {
+  const text = asText(value);
+  if (!text) return 0;
+  const epoch = Date.parse(text);
+  return Number.isFinite(epoch) ? epoch : 0;
 }
 
 function normaliseText(value: string) {

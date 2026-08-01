@@ -9,6 +9,7 @@ import {
   validateAnalysisReport,
   validateCaseInput,
 } from "../../lib/caseflow-analysis";
+import { createServerComponentClient } from "@/lib/supabase/server";
 import { requestGeminiWithFallback, type GeminiResponse } from "@/lib/gemini-request";
 
 type ValidationIssues = {
@@ -141,6 +142,27 @@ export async function POST(request: Request) {
     );
   }
 
+  const supabase = await createServerComponentClient();
+  const { data: claimsData, error: claimsError } = await supabase.auth.getClaims();
+
+  if (claimsError || !claimsData?.claims) {
+    return Response.json({ error: "Authentication required." }, { status: 401 });
+  }
+
+  const { data: caseData, error: caseError } = await supabase
+    .schema("public")
+    .from("cases")
+    .select("id")
+    .eq("id", input.caseId)
+    .maybeSingle();
+
+  if (caseError || !caseData?.id) {
+    return Response.json(
+      { error: "Case not found or access is not authorised." },
+      { status: 404 },
+    );
+  }
+
   try {
     const { model, response: geminiResponse } = await requestGeminiWithFallback(
       buildGeminiBody(input),
@@ -148,7 +170,18 @@ export async function POST(request: Request) {
     const firstResult = validateGeminiAnalysisResponse(geminiResponse, model, "initial");
 
     if (firstResult.report) {
-      return Response.json(buildSuccessResponse(input, firstResult.report, model));
+      const persisted = await persistCaseAnalysis(supabase, input.caseId, firstResult.report, model);
+
+      if (!persisted.ok) {
+        return Response.json(
+          { error: "Analysis was generated but could not be persisted." },
+          { status: 500 },
+        );
+      }
+
+      return Response.json(
+        buildSuccessResponse(input, firstResult.report, model, persisted.data),
+      );
     }
 
     if (firstResult.parsed || firstResult.rawText) {
@@ -158,7 +191,23 @@ export async function POST(request: Request) {
       const repairResult = validateGeminiAnalysisResponse(repairResponse, repairModel, "repair");
 
       if (repairResult.report) {
-        return Response.json(buildSuccessResponse(input, repairResult.report, repairModel));
+        const persisted = await persistCaseAnalysis(
+          supabase,
+          input.caseId,
+          repairResult.report,
+          repairModel,
+        );
+
+        if (!persisted.ok) {
+          return Response.json(
+            { error: "Analysis was generated but could not be persisted." },
+            { status: 500 },
+          );
+        }
+
+        return Response.json(
+          buildSuccessResponse(input, repairResult.report, repairModel, persisted.data),
+        );
       }
     }
   } catch (error) {
@@ -174,6 +223,11 @@ function buildSuccessResponse(
   input: FictionalCaseInput,
   report: CaseIntelligenceReport,
   model: string,
+  persisted?: {
+    analysisId?: string;
+    verificationStatus?: string;
+    version?: number;
+  },
 ): AnalyzeCaseResponse {
   return {
     caseId: input.caseId,
@@ -185,7 +239,56 @@ function buildSuccessResponse(
     advisoryOutputLabel: ADVISORY_OUTPUT_LABEL,
     model,
     modelUsed: model,
+    analysisId: persisted?.analysisId,
+    version: persisted?.version,
+    verificationStatus: persisted?.verificationStatus,
   };
+}
+
+async function persistCaseAnalysis(
+  supabase: Awaited<ReturnType<typeof createServerComponentClient>>,
+  caseId: string,
+  report: CaseIntelligenceReport,
+  model: string,
+) {
+  const { data, error } = await supabase
+    .schema("public")
+    .rpc("save_case_analysis_version", {
+      p_case_id: caseId,
+      p_model: model,
+      p_report: report,
+      p_source: "gemini",
+    });
+
+  if (error) {
+    console.error("Analysis persistence failed:", {
+      caseId,
+      code: error.code,
+      details: error.details,
+      message: error.message,
+    });
+    return { ok: false as const };
+  }
+
+  const row = toRecord(data);
+
+  return {
+    ok: true as const,
+    data: {
+      analysisId: asText(row?.id),
+      verificationStatus: asText(row?.verification_status),
+      version: toInteger(row?.version),
+    },
+  };
+}
+
+function toInteger(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
 }
 
 function buildGeminiBody(input: FictionalCaseInput) {

@@ -207,14 +207,92 @@ async function updateOfficerVerification(formData: FormData) {
     redirect("/login");
   }
 
-  const { error } = await supabase
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+
+  if (!userId) {
+    redirect("/login");
+  }
+
+  const assignmentCheck = await supabase
     .schema("public")
-    .from("cases")
-    .update({ officer_verification_status: status })
-    .eq("id", caseId);
+    .from("case_assignments")
+    .select("id, case_id, status, active, is_active, user_id, auth_user_id, assigned_user_id, assigned_to_user_id, officer_id")
+    .eq("case_id", caseId)
+    .limit(20);
+
+  const activeAssignment = (Array.isArray(assignmentCheck.data) ? assignmentCheck.data : []).find((row) => {
+    const owner = [
+      asText(row.user_id),
+      asText(row.auth_user_id),
+      asText(row.assigned_user_id),
+      asText(row.assigned_to_user_id),
+      asText(row.officer_id),
+    ].filter(Boolean);
+    const statusText = normaliseText(asText(row.status));
+    const activeFlag = row.active === true || row.is_active === true || statusText === "active";
+    const isEnded = statusText.includes("inactive") || statusText.includes("ended") || statusText.includes("closed");
+
+    return owner.includes(userId) && activeFlag && !isEnded;
+  });
+
+  if (!activeAssignment) {
+    revalidatePath(`/cases/${caseId}`);
+    redirect(`/cases/${encodeURIComponent(caseId)}?verification=blocked`);
+  }
+
+  const latestAnalysis = await supabase
+    .schema("public")
+    .from("case_analyses")
+    .select("id")
+    .eq("case_id", caseId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  let writeError: unknown = null;
+
+  if (latestAnalysis.data?.id) {
+    const analysisUpdate = await supabase
+      .schema("public")
+      .from("case_analyses")
+      .update({
+        verification_status: status,
+        verified_at: new Date().toISOString(),
+        verified_by: userId,
+      })
+      .eq("id", latestAnalysis.data.id)
+      .eq("case_id", caseId);
+
+    writeError = analysisUpdate.error;
+  } else {
+    const caseUpdate = await supabase
+      .schema("public")
+      .from("cases")
+      .update({
+        officer_verification_status: status,
+      })
+      .eq("id", caseId);
+
+    writeError = caseUpdate.error;
+  }
+
+  if (!writeError) {
+    await supabase.schema("public").from("case_activity").insert({
+      case_id: caseId,
+      action: "officer_verification_updated",
+      summary: `Officer verification status changed to ${status}`,
+      created_by: userId,
+      actor: userId,
+      source: "case_workspace",
+      verification_status: status,
+    });
+  } else {
+    console.error("Verification update failed:", writeError);
+  }
 
   revalidatePath(`/cases/${caseId}`);
-  redirect(`/cases/${encodeURIComponent(caseId)}?verification=${error ? "blocked" : "updated"}`);
+  redirect(`/cases/${encodeURIComponent(caseId)}?verification=${writeError ? "blocked" : "updated"}`);
 }
 
 function CaseOverviewCard({ caseRecord }: { caseRecord: CaseRecord }) {

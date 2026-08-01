@@ -3,11 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createClient as createSupabaseClient } from "@/lib/supabase/client";
 import { supportedLanguageCodes } from "@/lib/i18n/config";
-import { LanguageProvider, languageName, useLanguage } from "./language-provider";
+import { DEMO_SUPERVISORY_SCOPE } from "@/app/lib/supervisory-scope";
+import { resolveWorkspaceRole, selectActivePostingRoleCode, type WorkspaceRole } from "@/app/lib/workspace-role";
+import { languageName, useLanguage } from "./language-provider";
 
 type Theme = "light" | "dark";
+const interfacePreferencesStorageKey = "caseflow:interface-preferences";
+type RoleResolutionStatus = "resolving" | "resolved";
 
 type IconName =
   | "activity"
@@ -24,6 +29,7 @@ type IconName =
   | "filter"
   | "globe"
   | "layers"
+  | "menu"
   | "moon"
   | "plus"
   | "settings"
@@ -33,37 +39,200 @@ type IconName =
 
 const navItems = [
   { key: "dashboard", href: "/dashboard", icon: "dashboard", match: "/dashboard" },
+  { key: "citizenHome", href: "/citizen", icon: "dashboard", match: "/citizen" },
+  { key: "citizenReport", href: "/citizen/report", icon: "plus", match: "/citizen/report" },
+  { key: "citizenReports", href: "/citizen/reports", icon: "briefcase", match: "/citizen/reports" },
+  { key: "citizenSafety", href: "/citizen/safety", icon: "shield", match: "/citizen/safety" },
   { key: "myCases", href: "/cases", icon: "briefcase", match: "/cases" },
   { key: "createCase", href: "/cases/new", icon: "plus", match: "/cases/new" },
   { key: "analysis", href: "/cases", icon: "activity", match: "/analysis" },
   { key: "oversight", href: "/oversight", icon: "shield", match: "/oversight" },
+  { key: "citizenRequests", href: "/citizen-requests", icon: "clipboard", match: "/citizen-requests" },
   { key: "settings", href: "/settings", icon: "settings", match: "/settings" },
-] satisfies Array<{ key: "analysis" | "createCase" | "dashboard" | "myCases" | "oversight" | "settings"; href: string; icon: IconName; match: string }>;
+] satisfies Array<{ key: "analysis" | "citizenHome" | "citizenReport" | "citizenRequests" | "citizenReports" | "citizenSafety" | "createCase" | "dashboard" | "myCases" | "oversight" | "settings"; href: string; icon: IconName; match: string }>;
 
 export function AppShell({ children }: { children: ReactNode }) {
-  return (
-    <LanguageProvider>
-      <AppShellContent>{children}</AppShellContent>
-    </LanguageProvider>
-  );
+  return <AppShellContent>{children}</AppShellContent>;
 }
 
 function AppShellContent({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(getInitialSidebarCollapsed);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [workspaceRole, setWorkspaceRole] = useState<WorkspaceRole>("unknown");
+  const [roleResolutionStatus, setRoleResolutionStatus] = useState<RoleResolutionStatus>("resolving");
+  const [profileName, setProfileName] = useState("Authenticated user");
+  const [profileUnit, setProfileUnit] = useState("Active session");
+  const [profileBadge, setProfileBadge] = useState("AU");
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem("caseflow-theme", theme);
   }, [theme]);
 
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(interfacePreferencesStorageKey);
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw) as {
+        compactDensity?: boolean;
+        reducedMotion?: boolean;
+      };
+      document.documentElement.dataset.compactDensity = String(Boolean(parsed.compactDensity));
+      document.documentElement.dataset.reducedMotion = String(Boolean(parsed.reducedMotion));
+    } catch {
+      // Ignore malformed preference payloads.
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadSessionContext = async () => {
+      try {
+        const supabase = createSupabaseClient();
+        const { data: userData } = await supabase.auth.getUser();
+        const user = userData.user;
+
+        if (!user) {
+          if (!active) return;
+          setWorkspaceRole("unknown");
+          setProfileName("Role unavailable");
+          setProfileUnit("Posting unavailable");
+          setProfileBadge("AU");
+          setRoleResolutionStatus("resolved");
+          return;
+        }
+
+        const email = user.email || "Authenticated user";
+        const { data: postingRows } = await supabase
+          .schema("public")
+          .from("user_postings")
+          .select("role_code, posting_title, valid_from, valid_until, is_primary, is_active")
+          .eq("user_id", user.id)
+          .eq("is_active", true)
+          .order("is_primary", { ascending: false })
+          .order("valid_from", { ascending: false })
+          .limit(20);
+
+        const now = Date.now();
+        const activePosting = (Array.isArray(postingRows) ? postingRows : []).find((row) => {
+          const validFrom = Date.parse(String(row.valid_from ?? ""));
+          const validUntilRaw = String(row.valid_until ?? "").trim();
+          const validUntil = validUntilRaw ? Date.parse(validUntilRaw) : Number.NaN;
+
+          if (!Number.isFinite(validFrom) || validFrom > now) return false;
+          if (Number.isFinite(validUntil) && validUntil <= now) return false;
+          return true;
+        });
+
+        const postingRoleCode = selectActivePostingRoleCode(Array.isArray(postingRows) ? postingRows : []);
+        const nextRole = resolveWorkspaceRole({
+          postingRoleCode,
+          appMetadata: user.app_metadata,
+          userMetadata: user.user_metadata,
+        });
+
+        if (!active) return;
+
+        setWorkspaceRole(nextRole);
+        setProfileName(
+          nextRole === "supervisory"
+            ? DEMO_SUPERVISORY_SCOPE.workspaceRole
+            : nextRole === "citizen"
+              ? "Citizen Workspace"
+              : email,
+        );
+        setProfileUnit(
+          nextRole === "supervisory"
+            ? DEMO_SUPERVISORY_SCOPE.policeStation
+            : nextRole === "citizen"
+              ? "Public safety reporting"
+            : String(activePosting?.posting_title ?? "Posting unavailable") || "Posting unavailable",
+        );
+        setProfileBadge(
+          nextRole === "supervisory"
+            ? "SH"
+            : nextRole === "investigating"
+              ? "IO"
+              : nextRole === "citizen"
+                ? "CT"
+                : "AU",
+        );
+        setRoleResolutionStatus("resolved");
+      } catch {
+        if (!active) return;
+        setWorkspaceRole("unknown");
+        setRoleResolutionStatus("resolved");
+      }
+    };
+
+    void loadSessionContext();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    persistSidebarPreference(sidebarCollapsed);
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    const syncThemeFromStorage = (event: StorageEvent) => {
+      if (event.key !== "caseflow-theme") return;
+      const value = event.newValue;
+      if (value === "light" || value === "dark") {
+        setTheme(value);
+      }
+    };
+
+    const handleThemeEvent = (event: Event) => {
+      const detail = (event as CustomEvent<{ theme?: Theme }>).detail;
+      const nextTheme = detail?.theme;
+      if (nextTheme === "light" || nextTheme === "dark") {
+        setTheme(nextTheme);
+      }
+    };
+
+    window.addEventListener("storage", syncThemeFromStorage);
+    window.addEventListener("caseflow:theme-change", handleThemeEvent as EventListener);
+    return () => {
+      window.removeEventListener("storage", syncThemeFromStorage);
+      window.removeEventListener("caseflow:theme-change", handleThemeEvent as EventListener);
+    };
+  }, []);
+
   return (
-    <div className="app-shell">
-      <AppSidebar />
+    <div
+      className={`app-shell ${sidebarCollapsed ? "app-shell--sidebar-collapsed" : ""} ${mobileNavOpen ? "app-shell--mobile-nav-open" : ""}`}
+    >
+      <AppSidebar
+        collapsed={sidebarCollapsed}
+        mobileNavOpen={mobileNavOpen}
+        onCloseMobile={() => setMobileNavOpen(false)}
+        onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+        roleResolutionStatus={roleResolutionStatus}
+        workspaceRole={workspaceRole}
+      />
       <div className="app-main">
         <AppHeader
+          mobileNavOpen={mobileNavOpen}
+          onToggleSidebar={() => setMobileNavOpen((current) => !current)}
+          profileBadge={profileBadge}
+          profileName={profileName}
+          profileUnit={profileUnit}
+          roleResolutionStatus={roleResolutionStatus}
           theme={theme}
           onToggleTheme={() => setTheme(theme === "light" ? "dark" : "light")}
+          workspaceRole={workspaceRole}
         />
+        <div className="app-portal-link-bar">
+          <Link className="app-portal-link" href="/citizen">
+            Open Citizen Portal
+          </Link>
+        </div>
         <FictionalDataBanner />
         {children}
       </div>
@@ -78,38 +247,197 @@ function getInitialTheme(): Theme {
   return stored === "light" || stored === "dark" ? stored : "light";
 }
 
-export function AppSidebar() {
+function getInitialSidebarCollapsed() {
+  if (typeof window === "undefined") return false;
+
+  try {
+    const raw = window.localStorage.getItem(interfacePreferencesStorageKey);
+    if (!raw) return window.localStorage.getItem("caseflow-sidebar-collapsed") === "true";
+
+    const parsed = JSON.parse(raw) as { sidebarCollapsed?: unknown };
+    return parsed.sidebarCollapsed === true;
+  } catch {
+    return window.localStorage.getItem("caseflow-sidebar-collapsed") === "true";
+  }
+}
+
+function persistSidebarPreference(sidebarCollapsed: boolean) {
+  try {
+    window.localStorage.setItem("caseflow-sidebar-collapsed", String(sidebarCollapsed));
+    const raw = window.localStorage.getItem(interfacePreferencesStorageKey);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    parsed.sidebarCollapsed = sidebarCollapsed;
+    window.localStorage.setItem(interfacePreferencesStorageKey, JSON.stringify(parsed));
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+export function AppSidebar({
+  collapsed,
+  mobileNavOpen,
+  onCloseMobile,
+  onToggleCollapsed,
+  roleResolutionStatus,
+  workspaceRole,
+}: {
+  collapsed: boolean;
+  mobileNavOpen: boolean;
+  onCloseMobile: () => void;
+  onToggleCollapsed: () => void;
+  roleResolutionStatus: RoleResolutionStatus;
+  workspaceRole: WorkspaceRole;
+}) {
   const pathname = usePathname();
   const { t } = useLanguage();
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  const subtitle =
+    roleResolutionStatus === "resolving"
+      ? t("common.loadingWorkspace")
+      : workspaceRole === "supervisory"
+        ? t("oversight.supervisoryWorkspace")
+        : workspaceRole === "citizen"
+          ? t("citizen.workspace")
+        : workspaceRole === "investigating"
+          ? "Investigating Officer"
+          : t("common.roleUnavailable");
+  const visibleNavItems =
+    roleResolutionStatus === "resolving"
+      ? []
+      : workspaceRole === "citizen"
+        ? navItems.filter(
+            (item) =>
+              item.key === "citizenHome" ||
+              item.key === "citizenReport" ||
+              item.key === "citizenReports" ||
+              item.key === "citizenSafety" ||
+              item.key === "settings",
+          )
+      : workspaceRole === "supervisory"
+          ? navItems.filter((item) => item.key === "dashboard" || item.key === "oversight" || item.key === "citizenRequests" || item.key === "settings")
+      : workspaceRole === "investigating"
+        ? navItems
+        : navItems.filter((item) => item.key === "dashboard" || item.key === "settings");
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 920px)");
+
+    if (!mobileNavOpen || !mediaQuery.matches) {
+      document.body.style.overflow = "";
+      return;
+    }
+
+    document.body.style.overflow = "hidden";
+
+    const focusables = Array.from(
+      (sidebarRef.current?.querySelectorAll(
+        "a[href], button:not([disabled]), [tabindex]:not([tabindex='-1'])",
+      ) ?? []) as NodeListOf<HTMLElement>,
+    );
+    focusables[0]?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseMobile();
+        return;
+      }
+
+      if (event.key !== "Tab" || focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = "";
+    };
+  }, [mobileNavOpen, onCloseMobile]);
 
   return (
-    <aside className="app-sidebar" aria-label="CaseFlow AI workspace navigation">
+    <>
+      {mobileNavOpen ? <button className="app-sidebar-overlay" onClick={onCloseMobile} aria-label="Close navigation" /> : null}
+      <aside
+        className={`app-sidebar ${mobileNavOpen ? "app-sidebar--mobile-open" : ""} ${collapsed ? "app-sidebar--collapsed" : ""}`}
+        aria-label="CaseFlow AI workspace navigation"
+        ref={sidebarRef}
+      >
       <Link className="app-sidebar-brand" href="/dashboard" aria-label="CaseFlow AI dashboard">
         <span className="app-brand-mark" aria-hidden="true">
           <Icon name="layers" />
         </span>
-        <span>
+        <span className={collapsed ? "app-sidebar-label" : undefined}>
           <strong>CaseFlow AI</strong>
-          <em>{t("common.interfaceLanguage")}</em>
+          <em>{subtitle}</em>
         </span>
       </Link>
 
+      <button
+        className="app-sidebar-collapse"
+        onClick={onToggleCollapsed}
+        type="button"
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+      >
+        <Icon name={collapsed ? "arrow" : "chevron"} />
+        <span>{collapsed ? "Expand" : "Collapse"}</span>
+      </button>
+
+      <button
+        className="app-sidebar-mobile-close"
+        onClick={onCloseMobile}
+        type="button"
+        aria-label="Close navigation"
+      >
+        <Icon name="chevron" />
+      </button>
+
       <nav className="app-sidebar-nav" aria-label="Primary app navigation">
-        {navItems.map((item) => {
+        {visibleNavItems.map((item) => {
           const isActive =
-            item.href === "/cases"
-              ? pathname === "/cases" || (pathname.startsWith("/cases/") && pathname !== "/cases/new")
-              : pathname === item.href || pathname.startsWith(item.match);
+            item.key === "dashboard"
+              ? pathname === "/dashboard"
+              : item.key === "citizenHome"
+                ? pathname === "/citizen"
+                : item.key === "citizenReport"
+                  ? pathname === "/citizen/report"
+                  : item.key === "citizenReports"
+                    ? pathname === "/citizen/reports" || pathname.startsWith("/citizen/reports/")
+                    : item.key === "citizenSafety"
+                      ? pathname === "/citizen/safety"
+              : item.key === "myCases"
+                ? pathname === "/cases" || (pathname.startsWith("/cases/") && pathname !== "/cases/new")
+                : item.key === "createCase"
+                  ? pathname === "/cases/new"
+                  : item.key === "analysis"
+                    ? pathname.startsWith("/analysis")
+                    : item.key === "citizenRequests"
+                      ? pathname === "/citizen-requests" || pathname.startsWith("/citizen-requests/")
+                    : pathname === item.href || pathname.startsWith(item.match);
+
+          const label = t(`nav.${item.key}`);
 
           return (
             <Link
               aria-current={isActive ? "page" : undefined}
+              aria-label={label}
               className={isActive ? "active" : undefined}
               href={item.href}
               key={item.key}
+              onClick={onCloseMobile}
+              title={collapsed ? label : undefined}
             >
               <Icon name={item.icon} />
-              <span>{t(`nav.${item.key}`)}</span>
+              <span>{label}</span>
             </Link>
           );
         })}
@@ -119,22 +447,72 @@ export function AppSidebar() {
         <span className="sidebar-card-icon" aria-hidden="true">
           <Icon name="shield" />
         </span>
-        <p>{t("common.interfaceLanguage")}</p>
+        <p>{subtitle}</p>
         <strong>{t("common.currentSelection")}</strong>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }
 
 export function AppHeader({
+  mobileNavOpen,
+  onToggleSidebar,
+  profileBadge,
+  profileName,
+  profileUnit,
+  roleResolutionStatus,
   theme,
   onToggleTheme,
+  workspaceRole,
 }: {
+  mobileNavOpen: boolean;
+  onToggleSidebar: () => void;
+  profileBadge: string;
+  profileName: string;
+  profileUnit: string;
+  roleResolutionStatus: RoleResolutionStatus;
   theme: Theme;
   onToggleTheme: () => void;
+  workspaceRole: WorkspaceRole;
 }) {
   const pathname = usePathname();
   const { language, setLanguage, t } = useLanguage();
+  const subtitle =
+    roleResolutionStatus === "resolving"
+      ? t("common.loadingWorkspace")
+      : workspaceRole === "supervisory"
+        ? t("oversight.supervisoryWorkspace")
+        : workspaceRole === "citizen"
+          ? t("citizen.workspace")
+        : workspaceRole === "investigating"
+          ? "Investigating Officer"
+          : t("common.roleUnavailable");
+
+  const effectiveProfileBadge =
+    roleResolutionStatus === "resolving"
+      ? "..."
+      : workspaceRole === "supervisory"
+        ? "SH"
+        : profileBadge;
+
+  const effectiveProfileName =
+    roleResolutionStatus === "resolving"
+      ? t("common.loading")
+      : workspaceRole === "supervisory"
+        ? t("oversight.stationHead")
+        : workspaceRole === "citizen"
+          ? t("citizen.workspace")
+        : profileName;
+
+  const effectiveProfileUnit =
+    roleResolutionStatus === "resolving"
+      ? t("common.loadingWorkspace")
+      : workspaceRole === "supervisory"
+        ? DEMO_SUPERVISORY_SCOPE.policeStation
+        : workspaceRole === "citizen"
+          ? t("citizen.profileUnit")
+        : profileUnit;
 
   const title = useMemo(() => {
     if (pathname.startsWith("/cases/new")) return t("nav.createCase");
@@ -142,6 +520,11 @@ export function AppHeader({
     if (pathname === "/cases") return t("nav.myCases");
     if (pathname.startsWith("/case-assistant")) return t("common.caseAssistant");
     if (pathname.startsWith("/analysis")) return t("nav.analysis");
+    if (pathname.startsWith("/citizen-requests")) return t("nav.citizenRequests");
+    if (pathname.startsWith("/citizen/report")) return t("nav.citizenReport");
+    if (pathname.startsWith("/citizen/reports")) return t("nav.citizenReports");
+    if (pathname.startsWith("/citizen/safety")) return t("nav.citizenSafety");
+    if (pathname.startsWith("/citizen")) return t("nav.citizenHome");
     if (pathname.startsWith("/oversight")) return t("nav.oversight");
     if (pathname.startsWith("/settings")) return t("nav.settings");
     return t("nav.dashboard");
@@ -150,11 +533,20 @@ export function AppHeader({
   return (
     <header className="app-header">
       <div>
-        <p>{t("common.interfaceLanguage")}</p>
+        <p>{subtitle}</p>
         <h1>{title}</h1>
       </div>
 
       <div className="app-header-actions">
+        <button
+          className="app-utility-button icon-only app-mobile-nav-toggle"
+          type="button"
+          onClick={onToggleSidebar}
+          aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
+          aria-expanded={mobileNavOpen}
+        >
+          <Icon name="menu" />
+        </button>
         <label className="app-utility-button language-placeholder" aria-label={t("common.languageSelector")}>
           <Icon name="globe" />
           <select
@@ -183,10 +575,10 @@ export function AppHeader({
           <Icon name={theme === "light" ? "moon" : "sun"} />
         </button>
         <div className="officer-profile" aria-label="Officer profile">
-          <span>IO</span>
+          <span>{effectiveProfileBadge}</span>
           <div>
-            <strong>Insp. Asha Rao</strong>
-            <em>Investigation Unit</em>
+            <strong>{effectiveProfileName}</strong>
+            <em>{effectiveProfileUnit}</em>
           </div>
         </div>
       </div>
@@ -200,7 +592,7 @@ export function FictionalDataBanner() {
   return (
     <div className="fictional-data-banner" role="status">
       <Icon name="alert" />
-      <span>{t("demoBanner")}</span>
+      <span>{t("common.demoBanner")}</span>
     </div>
   );
 }
@@ -352,6 +744,14 @@ function iconPath(name: IconName) {
           <path d="m12 3 8 4.2-8 4.2-8-4.2z" />
           <path d="m4 12 8 4.2 8-4.2" />
           <path d="m4 16.5 8 4.2 8-4.2" />
+        </>
+      );
+    case "menu":
+      return (
+        <>
+          <path d="M4 6h16" />
+          <path d="M4 12h16" />
+          <path d="M4 18h16" />
         </>
       );
     case "moon":
