@@ -5,9 +5,11 @@ import { useRouter } from "next/navigation";
 import { FormEvent, KeyboardEvent, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Icon } from "./app-shell";
+import { useLanguage } from "./language-provider";
 
 export function LoginForm() {
   const router = useRouter();
+  const { t } = useLanguage();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -27,7 +29,7 @@ export function LoginForm() {
       });
 
       if (error) {
-        setAuthError("Invalid email or password.");
+        setAuthError(t("common.authError"));
         setIsLoading(false);
         return;
       }
@@ -35,7 +37,7 @@ export function LoginForm() {
       router.push("/dashboard");
       router.refresh();
     } catch {
-      setAuthError("Invalid email or password.");
+      setAuthError(t("common.authError"));
       setIsLoading(false);
     }
   };
@@ -57,27 +59,21 @@ export function LoginForm() {
             </span>
             <span>
               <strong>CaseFlow AI</strong>
-              <em>Investigation intelligence workspace</em>
+              <em>{t("login.brandTag")}</em>
             </span>
           </Link>
 
           <div className="login-context-copy">
-            <p className="page-eyebrow">Authorised Access</p>
-            <h1 id="login-title">Sign in to CaseFlow AI</h1>
-            <p>
-              Access is determined by active role, posting, jurisdiction, and assigned
-              responsibilities.
-            </p>
+            <p className="page-eyebrow">{t("login.authorisedAccess")}</p>
+            <h1 id="login-title">{t("login.signInToCaseflow")}</h1>
+            <p>{t("login.intro")}</p>
           </div>
 
           <div className="login-security-card">
             <Icon name="shield" />
             <div>
-              <strong>Restricted access model</strong>
-              <p>
-                Access is restricted by role, current posting, territorial jurisdiction,
-                and case assignment.
-              </p>
+              <strong>{t("login.restrictedAccess")}</strong>
+              <p>{t("login.restrictedAccessCopy")}</p>
             </div>
           </div>
         </div>
@@ -85,17 +81,17 @@ export function LoginForm() {
         <form className="login-card" onKeyDown={handleKeyDown} onSubmit={handleSubmit}>
           <div className="login-warning" role="status">
             <Icon name="alert" />
-            <span>Demonstration environment — fictional case data only.</span>
+            <span>{t("warnings.fictionalData")}</span>
           </div>
 
           <div className="login-form-stack">
             <label className="login-field">
-              <span>Email address</span>
+              <span>{t("login.emailLabel")}</span>
               <input
                 autoComplete="email"
                 inputMode="email"
                 onChange={(event) => setEmail(event.target.value)}
-                placeholder="authorised.user@example.invalid"
+                placeholder={t("login.placeholderEmail")}
                 required
                 type="email"
                 value={email}
@@ -103,22 +99,22 @@ export function LoginForm() {
             </label>
 
             <label className="login-field">
-              <span>Password</span>
+              <span>{t("login.passwordLabel")}</span>
               <span className="login-password-control">
                 <input
                   autoComplete="current-password"
                   onChange={(event) => setPassword(event.target.value)}
-                  placeholder="Enter password"
+                  placeholder={t("login.placeholderPassword")}
                   required
                   type={showPassword ? "text" : "password"}
                   value={password}
                 />
                 <button
-                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  aria-label={showPassword ? t("login.hidePassword") : t("login.showPassword")}
                   onClick={() => setShowPassword((current) => !current)}
                   type="button"
                 >
-                  {showPassword ? "Hide" : "Show"}
+                  {showPassword ? t("login.hide") : t("login.show")}
                 </button>
               </span>
             </label>
@@ -134,21 +130,15 @@ export function LoginForm() {
           )}
 
           <button className="login-submit button button-primary" disabled={isLoading} type="submit">
-            {isLoading ? "Signing in..." : "Sign In"}
+            {isLoading ? t("common.signingIn") : t("common.signIn")}
             <Icon name="arrow" />
           </button>
 
-          <p className="login-privacy-note">
-            Privacy-first access controls should be verified before any production
-            deployment. Do not enter real case data in this demonstration environment.
-          </p>
+          <p className="login-privacy-note">{t("login.privacyNote")}</p>
         </form>
       </section>
 
-      <footer className="login-footer-note">
-        For immediate danger, contact official emergency services. CaseFlow AI does not replace
-        emergency response systems.
-      </footer>
+      <footer className="login-footer-note">{t("login.emergencyNotice")}</footer>
     </main>
   );
 }

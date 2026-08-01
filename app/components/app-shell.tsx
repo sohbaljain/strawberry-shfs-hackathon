@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
+import { supportedLanguageCodes } from "@/lib/i18n/config";
 import { LanguageProvider, languageName, useLanguage } from "./language-provider";
 
 type Theme = "light" | "dark";
@@ -89,7 +90,7 @@ export function AppSidebar() {
         </span>
         <span>
           <strong>CaseFlow AI</strong>
-          <em>Officer workspace</em>
+          <em>{t("common.interfaceLanguage")}</em>
         </span>
       </Link>
 
@@ -108,7 +109,7 @@ export function AppSidebar() {
               key={item.key}
             >
               <Icon name={item.icon} />
-              <span>{t(item.key)}</span>
+              <span>{t(`nav.${item.key}`)}</span>
             </Link>
           );
         })}
@@ -118,8 +119,8 @@ export function AppSidebar() {
         <span className="sidebar-card-icon" aria-hidden="true">
           <Icon name="shield" />
         </span>
-        <p>Investigation workspace</p>
-        <strong>Cases, evidence, and actions</strong>
+        <p>{t("common.interfaceLanguage")}</p>
+        <strong>{t("common.currentSelection")}</strong>
       </div>
     </aside>
   );
@@ -135,36 +136,40 @@ export function AppHeader({
   const pathname = usePathname();
   const { language, setLanguage, t } = useLanguage();
 
-  const cycleLanguage = () => {
-    if (language === "en") return setLanguage("hi");
-    if (language === "hi") return setLanguage("pa");
-    return setLanguage("en");
-  };
-
   const title = useMemo(() => {
-    if (pathname.startsWith("/cases/new")) return t("createCase");
-    if (pathname.startsWith("/cases/")) return t("openCase");
-    if (pathname === "/cases") return t("myCases");
-    if (pathname.startsWith("/case-assistant")) return t("caseAssistant");
-    if (pathname.startsWith("/analysis")) return t("analysis");
-    if (pathname.startsWith("/oversight")) return t("oversight");
-    if (pathname.startsWith("/settings")) return t("settings");
-    return t("dashboard");
+    if (pathname.startsWith("/cases/new")) return t("nav.createCase");
+    if (pathname.startsWith("/cases/")) return t("common.openCase");
+    if (pathname === "/cases") return t("nav.myCases");
+    if (pathname.startsWith("/case-assistant")) return t("common.caseAssistant");
+    if (pathname.startsWith("/analysis")) return t("nav.analysis");
+    if (pathname.startsWith("/oversight")) return t("nav.oversight");
+    if (pathname.startsWith("/settings")) return t("nav.settings");
+    return t("nav.dashboard");
   }, [pathname, t]);
 
   return (
     <header className="app-header">
       <div>
-        <p>Investigating Officer</p>
+        <p>{t("common.interfaceLanguage")}</p>
         <h1>{title}</h1>
       </div>
 
       <div className="app-header-actions">
-        <button className="app-utility-button language-placeholder" type="button" aria-label="Language selector" onClick={cycleLanguage}>
+        <label className="app-utility-button language-placeholder" aria-label={t("common.languageSelector")}>
           <Icon name="globe" />
-          <span>{languageName(language)}</span>
+          <select
+            aria-label={t("common.languageSelector")}
+            onChange={(event) => setLanguage(event.target.value as typeof language)}
+            value={language}
+          >
+            {supportedLanguageCodes.map((code) => (
+              <option key={code} value={code}>
+                {languageName(code)}
+              </option>
+            ))}
+          </select>
           <Icon name="chevron" />
-        </button>
+        </label>
         <button className="app-utility-button icon-only" type="button" aria-label="Notifications">
           <Icon name="bell" />
           <span className="notification-dot" aria-hidden="true" />

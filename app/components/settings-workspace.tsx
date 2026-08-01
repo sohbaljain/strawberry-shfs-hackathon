@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { isSupportedLanguageCode, supportedLanguageCodes } from "@/lib/i18n/config";
 import { Icon } from "./app-shell";
 import { languageName, readStoredLanguage, useLanguage, type LanguageCode } from "./language-provider";
 
@@ -68,9 +69,7 @@ export function SettingsWorkspace({
   };
 
   const clearLocalChats = () => {
-    const confirmed = window.confirm(
-      "Clear local case chat history stored on this device for the demonstration prototype?",
-    );
+    const confirmed = window.confirm(t("settings.clearLocalChatConfirm"));
 
     if (!confirmed) return;
 
@@ -86,7 +85,7 @@ export function SettingsWorkspace({
     const { error } = await supabase.auth.signOut();
 
     if (error) {
-      setSessionError("Unable to sign out.");
+      setSessionError(t("settings.signOutError"));
       setSessionStatus("idle");
       return;
     }
@@ -97,31 +96,31 @@ export function SettingsWorkspace({
 
   const preferenceSummary = useMemo(
     () => [
-      `Language: ${languageName(preferences.language)}`,
-      `Appearance: ${preferences.appearance}`,
-      preferences.reducedMotion ? "Reduced motion enabled" : "Standard motion",
-      preferences.compactDensity ? "Compact density enabled" : "Comfortable density",
+      t("settings.languageSummary", { name: languageName(preferences.language) }),
+      t("settings.appearanceSummary", { value: preferences.appearance }),
+      preferences.reducedMotion ? t("settings.reducedMotionEnabled") : t("settings.standardMotion"),
+      preferences.compactDensity
+        ? t("settings.compactDensityEnabled")
+        : t("settings.comfortableDensity"),
     ],
-    [preferences],
+    [preferences, t],
   );
 
   return (
     <section className="settings-layout">
-      <SettingsCard eyebrow="Account profile" title="Read-only account details" icon="user">
+      <SettingsCard eyebrow={t("settings.accountProfile")} title={t("settings.readOnlyAccountDetails")} icon="user">
         <SettingsFieldGrid fields={accountFields} />
       </SettingsCard>
 
-      <SettingsCard eyebrow="Current posting" title="Posting and jurisdiction" icon="briefcase">
+      <SettingsCard eyebrow={t("settings.currentPosting")} title={t("settings.postingAndJurisdiction")} icon="briefcase">
         <SettingsFieldGrid fields={postingFields} />
-        <p className="settings-note">
-          Posting and jurisdiction changes require authorised administrative approval.
-        </p>
+        <p className="settings-note">{t("settings.postingApprovalNote")}</p>
       </SettingsCard>
 
-      <SettingsCard eyebrow="Interface preferences" title="Local display controls" icon="settings">
+      <SettingsCard eyebrow={t("settings.interfacePreferences")} title={t("settings.localDisplayControls")} icon="settings">
         <div className="settings-preferences">
           <label>
-            <span>Language</span>
+            <span>{t("common.language")}</span>
             <select
               value={preferences.language}
               onChange={(event) =>
@@ -131,14 +130,16 @@ export function SettingsWorkspace({
                 })
               }
             >
-              <option value="en">English</option>
-              <option value="hi">Hindi</option>
-              <option value="pa">Punjabi</option>
+              {supportedLanguageCodes.map((code) => (
+                <option key={code} value={code}>
+                  {languageName(code)}
+                </option>
+              ))}
             </select>
           </label>
 
           <label>
-            <span>Appearance</span>
+            <span>{t("settings.appearanceSummary", { value: "" }).replace(": ", "")}</span>
             <select
               value={preferences.appearance}
               onChange={(event) =>
@@ -156,7 +157,7 @@ export function SettingsWorkspace({
 
           <ToggleControl
             checked={preferences.reducedMotion}
-            label="Reduced motion"
+            label={t("settings.reducedMotionEnabled")}
             onChange={(checked) =>
               updatePreferences({
                 ...preferences,
@@ -166,7 +167,7 @@ export function SettingsWorkspace({
           />
           <ToggleControl
             checked={preferences.compactDensity}
-            label="Compact density"
+            label={t("settings.compactDensityEnabled")}
             onChange={(checked) =>
               updatePreferences({
                 ...preferences,
@@ -182,30 +183,28 @@ export function SettingsWorkspace({
         </ul>
       </SettingsCard>
 
-      <SettingsCard eyebrow="Privacy and data handling" title="Demonstration storage" icon="shield">
+      <SettingsCard eyebrow={t("settings.privacyAndDataHandling")} title={t("settings.demonstrationStorage")} icon="shield">
         <div className="settings-privacy-grid">
           <div>
-            <span>Fictional-data-only status</span>
-            <strong>Enabled</strong>
+            <span>{t("settings.fieldFictionalDataOnly")}</span>
+            <strong>{t("settings.fieldEnabled")}</strong>
           </div>
           <div>
-            <span>Local chat-storage status</span>
-            <strong>Device only</strong>
+            <span>{t("settings.fieldLocalChatStorage")}</span>
+            <strong>{t("common.deviceOnly")}</strong>
           </div>
           <div>
-            <span>Current device chat count</span>
+            <span>{t("settings.fieldCurrentDeviceChats")}</span>
             <strong>{chatCount}</strong>
           </div>
         </div>
         <button className="app-link-button settings-clear-button" type="button" onClick={clearLocalChats}>
-          Clear local case chats
+          {t("settings.fieldClearChats")}
         </button>
-        <p className="settings-note">
-          Case chat history is stored only on this device for the demonstration prototype.
-        </p>
+        <p className="settings-note">{t("settings.storageNote")}</p>
       </SettingsCard>
 
-      <SettingsCard eyebrow="Security and session" title="Current access session" icon="shield">
+      <SettingsCard eyebrow={t("settings.securityAndSession")} title={t("settings.currentAccessSession")} icon="shield">
         <SettingsFieldGrid fields={sessionFields} />
         {sessionError ? <p className="settings-error">{sessionError}</p> : null}
         <button
@@ -214,25 +213,17 @@ export function SettingsWorkspace({
           onClick={signOut}
           type="button"
         >
-          {sessionStatus === "signing-out" ? "Signing out" : t("signOut")}
+          {sessionStatus === "signing-out" ? t("settings.signingOut") : t("common.signOut")}
         </button>
       </SettingsCard>
 
-      <SettingsCard eyebrow="Access explanation" title="How access is determined" icon="layers">
-        <p className="settings-body-text">
-          Access is determined by active role, current posting, territorial jurisdiction,
-          assigned case, supervisory authority, purpose of access, and temporary authorisation.
-        </p>
+      <SettingsCard eyebrow={t("settings.accessExplanation")} title={t("settings.howAccessIsDetermined")} icon="layers">
+        <p className="settings-body-text">{t("settings.accessExplanationNote")}</p>
       </SettingsCard>
 
-      <SettingsCard eyebrow="Prototype limitations" title="Security limitations" icon="alert">
+      <SettingsCard eyebrow={t("settings.prototypeLimitations")} title={t("settings.securityLimitations")} icon="alert">
         <ul className="settings-mini-list">
-          <li>Authentication is demonstration-grade.</li>
-          <li>Real police deployment would require MFA.</li>
-          <li>Government-controlled infrastructure would be required.</li>
-          <li>Encryption controls would need formal review.</li>
-          <li>Audit review and approved identity provisioning would be required.</li>
-          <li>Production security testing would be mandatory.</li>
+          <li>{t("settings.prototypeLimitationsNote")}</li>
         </ul>
       </SettingsCard>
     </section>
@@ -307,16 +298,15 @@ function readPreferences(): Preferences {
 
     const parsed = JSON.parse(raw) as Partial<Preferences>;
 
+    const nextLanguage = isSupportedLanguageCode(parsed.language) ? parsed.language : persistedLanguage;
+
     return {
       appearance:
         parsed.appearance === "light" || parsed.appearance === "dark" || parsed.appearance === "system"
           ? parsed.appearance
           : defaultPreferences.appearance,
       compactDensity: Boolean(parsed.compactDensity),
-      language:
-        parsed.language === "en" || parsed.language === "hi" || parsed.language === "pa"
-          ? parsed.language
-          : persistedLanguage,
+      language: nextLanguage,
       reducedMotion: Boolean(parsed.reducedMotion),
     };
   } catch {

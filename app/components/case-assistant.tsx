@@ -40,8 +40,6 @@ const historyMessagesForRequest = 12;
 const sessionStoragePrefix = "caseflow:case-chat-sessions:";
 const activeSessionStoragePrefix = "caseflow:active-case-chat:";
 const newChatTitle = "New case chat";
-const openingMessage =
-  "Ask about this fictional case’s timeline, contradictions, missing information, evidence gaps, forensic requests, or preparation status.";
 
 const quickPrompts = [
   "What information is still missing?",
@@ -72,7 +70,7 @@ export function CaseAssistant({
       </span>
       <span>
         <strong>{t("caseAssistant")}</strong>
-        <em>Open a dedicated advisory chat for {caseReference}.</em>
+        <em>{t("cases.caseAssistantLaunch", { caseReference })}</em>
       </span>
       <Icon name="arrow" />
     </Link>
@@ -311,7 +309,9 @@ export function CaseAssistantWorkspace({ caseId }: { caseId: string }) {
           <div className="case-assistant-heading">
             <span className="report-source-pill">
               <Icon name={packet.source === "gemini" ? "activity" : "alert"} />
-              {packet.source === "gemini" ? "Validated Gemini report" : "Mock fallback context"}
+              {packet.source === "gemini"
+                ? t("assistant.validatedGeminiReport")
+                : t("assistant.mockFallbackContext")}
             </span>
             <h2 id="case-assistant-title">{t("caseAssistant")}</h2>
             <p>{packet.displayName}</p>
@@ -338,7 +338,7 @@ export function CaseAssistantWorkspace({ caseId }: { caseId: string }) {
           {messages.length === 0 ? (
             <div className="case-assistant-empty">
               <Icon name="shield" />
-              <p>{openingMessage}</p>
+              <p>{t("assistant.placeholder")}</p>
             </div>
           ) : (
             messages.map((message) => <AssistantMessage key={message.id} message={message} />)
@@ -379,7 +379,7 @@ export function CaseAssistantWorkspace({ caseId }: { caseId: string }) {
 
         <footer className="case-assistant-composer">
           <label className="sr-only" htmlFor="case-assistant-input">
-            Ask a question about the current fictional case
+            {t("assistant.askCasePrompt")}
           </label>
           <textarea
             id="case-assistant-input"
@@ -387,13 +387,13 @@ export function CaseAssistantWorkspace({ caseId }: { caseId: string }) {
             maxLength={700}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about this case..."
+            placeholder={t("assistant.askCasePrompt")}
             ref={inputRef}
             rows={3}
             value={draft}
           />
           <div>
-            <span>Enter sends. Shift+Enter adds a new line.</span>
+            <span>{t("assistant.enterSendsHint")}</span>
             <button
               className="case-assistant-send"
               data-testid="case-assistant-send"
@@ -401,7 +401,7 @@ export function CaseAssistantWorkspace({ caseId }: { caseId: string }) {
               onClick={() => void sendMessage(draft)}
               type="button"
             >
-              {sendState === "sending" ? "Sending" : "Send"}
+              {sendState === "sending" ? t("assistant.sending") : t("assistant.send")}
               <Icon name="arrow" />
             </button>
           </div>
@@ -432,8 +432,8 @@ function CaseChatSidebar({
     <aside className="case-chat-history-sidebar" aria-label="Case chat history">
       <div className="case-chat-history-header">
         <div>
-          <p>Local history</p>
-          <h2>Case chats</h2>
+          <p>{t("assistant.localHistory")}</p>
+          <h2>{t("assistant.caseChats")}</h2>
         </div>
         <button className="app-link-button" onClick={onNewChat} type="button">
           <Icon name="plus" />
@@ -458,18 +458,18 @@ function CaseChatSidebar({
               </button>
               <div className="case-chat-session-actions">
                 <button
-                  aria-label={`Rename ${session.title}`}
+                  aria-label={`${t("assistant.renamePrompt")} ${session.title}`}
                   onClick={() => onRenameSession(session.id)}
                   type="button"
                 >
-                  Rename
+                  {t("common.rename")}
                 </button>
                 <button
-                  aria-label={`Delete ${session.title}`}
+                  aria-label={`${t("common.delete")} ${session.title}`}
                   onClick={() => onDeleteSession(session.id)}
                   type="button"
                 >
-                  Delete
+                  {t("common.delete")}
                 </button>
               </div>
             </article>
@@ -477,9 +477,7 @@ function CaseChatSidebar({
         })}
       </div>
 
-      <p className="case-chat-storage-note">
-        Chats remain on this device and are stored separately for this case.
-      </p>
+      <p className="case-chat-storage-note">{t("assistant.chatStorageNote")}</p>
     </aside>
   );
 }

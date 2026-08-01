@@ -7,6 +7,7 @@ import {
   validateAnalysisReport,
   validateCaseInput,
 } from "../../lib/caseflow-analysis";
+import { isSupportedLanguageCode, type SupportedLanguageCode } from "@/lib/i18n/config";
 import { requestGeminiWithFallback, type GeminiResponse } from "@/lib/gemini-request";
 
 type RequestValidationResult =
@@ -195,12 +196,7 @@ function buildSystemInstruction() {
 
 function buildPrompt(request: CaseAssistantRequest) {
   const allowedSources = buildAllowedSources(request.caseInput, request.analysisReport);
-  const responseLanguage =
-    request.uiLanguage === "hi"
-      ? "Hindi"
-      : request.uiLanguage === "pa"
-        ? "Punjabi"
-        : "English";
+  const responseLanguage = request.uiLanguage ? languageDisplayName(request.uiLanguage) : "English";
 
   return `
 Answer the officer's question using only the supplied fictional case material.
@@ -223,9 +219,60 @@ ${JSON.stringify(request.analysisReport, null, 2)}
 `;
 }
 
-function parseUiLanguage(value: unknown): "en" | "hi" | "pa" | undefined {
-  if (value === "en" || value === "hi" || value === "pa") return value;
-  return undefined;
+function parseUiLanguage(value: unknown): SupportedLanguageCode | undefined {
+  return isSupportedLanguageCode(value) ? value : undefined;
+}
+
+function languageDisplayName(language: SupportedLanguageCode) {
+  switch (language) {
+    case "as":
+      return "Assamese";
+    case "bn":
+      return "Bengali";
+    case "brx":
+      return "Bodo";
+    case "doi":
+      return "Dogri";
+    case "gu":
+      return "Gujarati";
+    case "hi":
+      return "Hindi";
+    case "kn":
+      return "Kannada";
+    case "kok":
+      return "Konkani";
+    case "ks":
+      return "Kashmiri";
+    case "mai":
+      return "Maithili";
+    case "ml":
+      return "Malayalam";
+    case "mni":
+      return "Meitei";
+    case "mr":
+      return "Marathi";
+    case "ne":
+      return "Nepali";
+    case "or":
+      return "Oriya";
+    case "pa":
+      return "Punjabi";
+    case "sa":
+      return "Sanskrit";
+    case "sat":
+      return "Santali";
+    case "sd":
+      return "Sindhi";
+    case "ta":
+      return "Tamil";
+    case "te":
+      return "Telugu";
+    case "ur":
+      return "Urdu";
+    case "en":
+    default:
+      return "English";
+  }
 }
 
 function validateAssistantResponse(
