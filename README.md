@@ -86,6 +86,8 @@ CaseFlow AI is not an FIR database, emergency-response service, court system, or
 
 We used **ChatGPT** and **OpenAI Codex** during development for planning, coding support, debugging, SQL assistance, and documentation.
 
+- Google Gemini API was used to power the case-specific AI assistant and advisory analysis features.
+
 The team made the final product decisions, tested the application, and completed the implementation.
 
 ## Team
